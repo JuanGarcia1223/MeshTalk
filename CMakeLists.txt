@@ -25,6 +25,11 @@ FetchContent_MakeAvailable(notcurses)
 
 add_executable(meshtalk_demo
   src/main.cpp
+  src/ui/TerminalUI.cpp
+)
+
+target_include_directories(meshtalk_demo PRIVATE
+  src
 )
 
 # Notcurses target names can vary; support common exported names.
