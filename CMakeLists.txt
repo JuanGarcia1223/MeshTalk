@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(Protobuf REQUIRED)
+
 include(FetchContent)
 
 # Pull notcurses directly from upstream.
@@ -23,13 +25,21 @@ set(BUILD_TESTING OFF CACHE BOOL "Disable tests" FORCE)
 
 FetchContent_MakeAvailable(notcurses)
 
+protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
+  proto/discovery.proto
+)
+
 add_executable(meshtalk_demo
   src/main.cpp
+  src/discovery/UdpHelloBroadcaster.cpp
   src/ui/TerminalUI.cpp
+  ${PROTO_SRCS}
 )
 
 target_include_directories(meshtalk_demo PRIVATE
   src
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${Protobuf_INCLUDE_DIRS}
 )
 
 # Notcurses target names can vary; support common exported names.
@@ -42,3 +52,7 @@ elseif(TARGET notcurses-core)
 else()
   message(FATAL_ERROR "No expected notcurses target found (notcurses++, notcurses, notcurses-core)")
 endif()
+
+target_link_libraries(meshtalk_demo PRIVATE
+  ${Protobuf_LIBRARIES}
+)
