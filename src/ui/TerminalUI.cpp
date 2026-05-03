@@ -1,7 +1,11 @@
 #include "ui/TerminalUI.h"
 
+#include <unistd.h>
+
 #include <algorithm>
+#include <cstdio>
 #include <sstream>
+#include <utility>
 
 namespace {
 uint64_t make_channels(unsigned fg_r, unsigned fg_g, unsigned fg_b, unsigned bg_r,
@@ -13,15 +17,31 @@ uint64_t make_channels(unsigned fg_r, unsigned fg_g, unsigned fg_b, unsigned bg_
 }
 }  // namespace
 
-TerminalUI::TerminalUI(bool debug_mode) : debug_mode_(debug_mode) {}
+TerminalUI::TerminalUI(bool debug_mode, std::string self_name)
+    : debug_mode_(debug_mode), self_name_(std::move(self_name)) {}
 
 TerminalUI::~TerminalUI() { stop(); }
 
 bool TerminalUI::init() {
   notcurses_options opts{};
   opts.flags = NCOPTION_NO_WINCH_SIGHANDLER;
-  nc_ = notcurses_init(&opts, nullptr);
+  tty_fp_ = std::fopen("/dev/tty", "w");
+  if (!tty_fp_) {
+    return false;
+  }
+
+  nc_ = notcurses_init(&opts, tty_fp_);
   if (!nc_) {
+    std::fclose(tty_fp_);
+    tty_fp_ = nullptr;
+    return false;
+  }
+
+  if (!start_stdio_capture()) {
+    notcurses_stop(nc_);
+    nc_ = nullptr;
+    std::fclose(tty_fp_);
+    tty_fp_ = nullptr;
     return false;
   }
 
@@ -41,7 +61,14 @@ void TerminalUI::run() {
 
   ncinput in{};
   while (running_) {
-    const uint32_t input = notcurses_get_blocking(nc_, &in);
+    timespec ts{};
+    ts.tv_sec = 0;
+    ts.tv_nsec = 200000000;
+    const uint32_t input = notcurses_get(nc_, &ts, &in);
+    if (input == 0) {
+      render();
+      continue;
+    }
     if (input == static_cast<uint32_t>('q') || input == static_cast<uint32_t>('Q')) {
       running_ = false;
       break;
@@ -60,11 +87,24 @@ void TerminalUI::run() {
   }
 }
 
+void TerminalUI::upsert_peer(const std::string& name) {
+  if (name.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(peers_mutex_);
+  peers_.insert(name);
+}
+
 void TerminalUI::stop() {
   destroy_layout();
+  stop_stdio_capture();
   if (nc_) {
     notcurses_stop(nc_);
     nc_ = nullptr;
+  }
+  if (tty_fp_) {
+    std::fclose(tty_fp_);
+    tty_fp_ = nullptr;
   }
   running_ = false;
 }
@@ -230,16 +270,25 @@ void TerminalUI::draw_contacts() {
     return;
   }
 
-  const std::vector<std::string> peers = {"alice", "bob", "charlie", "dana"};
+  std::vector<std::string> peers;
+  {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    peers.assign(peers_.begin(), peers_.end());
+  }
+
   ncplane_set_channels(people_plane_, text_ch);
-  for (unsigned i = 0; i < peers.size(); ++i) {
-    const int y = 2 + static_cast<int>(i);
-    if (y >= static_cast<int>(rows) - 1) {
-      break;
+  if (peers.empty()) {
+    ncplane_putstr_yx(people_plane_, 2, 1, "(no peers yet)");
+  } else {
+    for (unsigned i = 0; i < peers.size(); ++i) {
+      const int y = 2 + static_cast<int>(i);
+      if (y >= static_cast<int>(rows) - 1) {
+        break;
+      }
+      std::string line = "• " + peers[i];
+      line = line.substr(0, cols - 2);
+      ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
     }
-    std::string line = "• " + peers[i];
-    line = line.substr(0, cols - 2);
-    ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
   }
 }
 
@@ -297,13 +346,18 @@ void TerminalUI::draw_debug() {
   }
 
   const int visible = static_cast<int>(rows) - 2;
-  const int total = static_cast<int>(debug_lines_.size());
+  std::vector<std::string> lines;
+  {
+    std::lock_guard<std::mutex> lock(debug_mutex_);
+    lines = debug_lines_;
+  }
+  const int total = static_cast<int>(lines.size());
   const int start = std::max(0, total - visible);
 
   ncplane_set_channels(debug_plane_, text_ch);
   int row = 1;
   for (int i = start; i < total && row < static_cast<int>(rows) - 1; ++i, ++row) {
-    std::string line = debug_lines_[i];
+    std::string line = lines[i];
     line = line.substr(0, cols - 2);
     ncplane_putstr_yx(debug_plane_, row, 1, line.c_str());
   }
@@ -313,8 +367,123 @@ void TerminalUI::add_debug(const std::string& line) {
   if (!debug_mode_) {
     return;
   }
+  std::lock_guard<std::mutex> lock(debug_mutex_);
   debug_lines_.push_back(line);
   if (debug_lines_.size() > 1000) {
     debug_lines_.erase(debug_lines_.begin());
+  }
+}
+
+bool TerminalUI::start_stdio_capture() {
+  int stdout_pipe[2];
+  int stderr_pipe[2];
+  if (pipe(stdout_pipe) != 0) {
+    return false;
+  }
+  if (pipe(stderr_pipe) != 0) {
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    return false;
+  }
+
+  orig_stdout_fd_ = dup(STDOUT_FILENO);
+  orig_stderr_fd_ = dup(STDERR_FILENO);
+  if (orig_stdout_fd_ < 0 || orig_stderr_fd_ < 0) {
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    close(stderr_pipe[0]);
+    close(stderr_pipe[1]);
+    close_fd(orig_stdout_fd_);
+    close_fd(orig_stderr_fd_);
+    return false;
+  }
+
+  stdout_pipe_read_ = stdout_pipe[0];
+  stdout_pipe_write_ = stdout_pipe[1];
+  stderr_pipe_read_ = stderr_pipe[0];
+  stderr_pipe_write_ = stderr_pipe[1];
+
+  if (dup2(stdout_pipe_write_, STDOUT_FILENO) < 0 || dup2(stderr_pipe_write_, STDERR_FILENO) < 0) {
+    stop_stdio_capture();
+    return false;
+  }
+
+  setvbuf(stdout, nullptr, _IONBF, 0);
+  setvbuf(stderr, nullptr, _IONBF, 0);
+
+  capture_running_ = true;
+  stdout_thread_ = std::thread(&TerminalUI::capture_loop, this, stdout_pipe_read_, "stdout");
+  stderr_thread_ = std::thread(&TerminalUI::capture_loop, this, stderr_pipe_read_, "stderr");
+  return true;
+}
+
+void TerminalUI::stop_stdio_capture() {
+  if (orig_stdout_fd_ == -1 && orig_stderr_fd_ == -1) {
+    return;
+  }
+
+  fflush(stdout);
+  fflush(stderr);
+
+  if (orig_stdout_fd_ != -1) {
+    dup2(orig_stdout_fd_, STDOUT_FILENO);
+  }
+  if (orig_stderr_fd_ != -1) {
+    dup2(orig_stderr_fd_, STDERR_FILENO);
+  }
+
+  close_fd(orig_stdout_fd_);
+  close_fd(orig_stderr_fd_);
+  close_fd(stdout_pipe_write_);
+  close_fd(stderr_pipe_write_);
+
+  capture_running_ = false;
+
+  if (stdout_thread_.joinable()) {
+    stdout_thread_.join();
+  }
+  if (stderr_thread_.joinable()) {
+    stderr_thread_.join();
+  }
+
+  close_fd(stdout_pipe_read_);
+  close_fd(stderr_pipe_read_);
+}
+
+void TerminalUI::capture_loop(int read_fd, const char* stream_name) {
+  std::string pending;
+  char buffer[512];
+
+  while (capture_running_) {
+    const ssize_t n = read(read_fd, buffer, sizeof(buffer));
+    if (n <= 0) {
+      break;
+    }
+
+    pending.append(buffer, static_cast<size_t>(n));
+    size_t pos = 0;
+    while (true) {
+      const size_t newline = pending.find('\n', pos);
+      if (newline == std::string::npos) {
+        pending.erase(0, pos);
+        break;
+      }
+      std::string line = pending.substr(pos, newline - pos);
+      if (debug_mode_) {
+        add_debug(std::string("[") + stream_name + "] " + line);
+      }
+      pos = newline + 1;
+    }
+  }
+
+  if (!pending.empty() && debug_mode_) {
+    add_debug(std::string("[") + stream_name + "] " + pending);
+  }
+}
+
+void TerminalUI::close_fd(int& fd) {
+  if (fd >= 0) {
+    close(fd);
+    fd = -1;
   }
 }
