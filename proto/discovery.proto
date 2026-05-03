@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+message DiscoveryPacket {
+  enum Type {
+    HELLO = 0;
+    HEARTBEAT = 1;
+    BYE = 2;
+  }
+
+  Type type = 1;
+  string username = 2;
+  string ip = 3;
+  uint32 tcp_port = 4;
+  int64 timestamp = 5;
+  bytes identity_pk = 6;
+}
