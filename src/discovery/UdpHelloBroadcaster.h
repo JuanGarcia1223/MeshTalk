@@ -8,31 +8,31 @@
 
 class UdpHelloBroadcaster {
 public:
-  UdpHelloBroadcaster(std::string username, uint16_t udp_port, uint16_t tcp_port,
-                      std::string payload_ip = "127.0.0.1",
-                      std::function<void(const std::string&)> on_peer_seen = {});
-  ~UdpHelloBroadcaster();
+    UdpHelloBroadcaster(std::string username, uint16_t udp_port, uint16_t tcp_port,
+                            std::string payload_ip = "127.0.0.1",
+                            std::function<void(const std::string&)> on_peer_seen = {});
+    ~UdpHelloBroadcaster();
 
-  UdpHelloBroadcaster(const UdpHelloBroadcaster&) = delete;
-  UdpHelloBroadcaster& operator=(const UdpHelloBroadcaster&) = delete;
+    UdpHelloBroadcaster(const UdpHelloBroadcaster&) = delete;
+    UdpHelloBroadcaster& operator=(const UdpHelloBroadcaster&) = delete;
 
-  bool start();
-  void stop();
+    bool start();
+    void stop();
 
 private:
-  void run_broadcast_loop();
-  void run_receive_loop();
-  bool send_hello();
+    void run_broadcast_loop();
+    void run_receive_loop();
+    bool send_hello();
 
-  std::string username_;
-  uint16_t udp_port_;
-  uint16_t tcp_port_;
-  std::string payload_ip_;
-  std::function<void(const std::string&)> on_peer_seen_;
+    std::string username_;
+    uint16_t udp_port_;
+    uint16_t tcp_port_;
+    std::string payload_ip_;
+    std::function<void(const std::string&)> on_peer_seen_;
 
-  int send_sockfd_{-1};
-  int recv_sockfd_{-1};
-  std::atomic<bool> running_{false};
-  std::thread broadcaster_thread_;
-  std::thread receiver_thread_;
+    int send_sockfd_{-1};
+    int recv_sockfd_{-1};
+    std::atomic<bool> running_{false};
+    std::thread broadcaster_thread_;
+    std::thread receiver_thread_;
 };
