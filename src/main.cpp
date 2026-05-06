@@ -1,3 +1,4 @@
+#include "chat/ChatServer.h"
 #include "discovery/UdpHelloBroadcaster.h"
 #include "ui/TerminalUI.h"
 
@@ -12,7 +13,6 @@
 
 namespace {
 constexpr uint16_t kDiscoveryUdpPort = 55000;
-constexpr uint16_t kFixedTcpPort = 9003;
 
 std::atomic<bool> g_keep_running{true};
 
@@ -44,8 +44,7 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
             name = argv[++i];
         } else {
-            std::cerr << "usage: " << argv[0]
-                                << " --name <one-word-name> [--debug] [--noui]\n";
+            std::cerr << "usage: " << argv[0] << " --name <one-word-name> [--debug] [--noui]\n";
             return 1;
         }
     }
@@ -58,9 +57,16 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
 
+    ChatServer chat_server;
+    if (!chat_server.start()) {
+        return 1;
+    }
+    const uint16_t chat_port = chat_server.port();
+
     if (no_ui_mode) {
-        UdpHelloBroadcaster broadcaster(name, kDiscoveryUdpPort, kFixedTcpPort, "127.0.0.1");
+        UdpHelloBroadcaster broadcaster(name, kDiscoveryUdpPort, chat_port, "127.0.0.1");
         if (!broadcaster.start()) {
+            chat_server.stop();
             return 1;
         }
         std::cout << "noui mode started for '" << name << "'. press Ctrl+C to stop.\n";
@@ -68,21 +74,25 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         broadcaster.stop();
+        chat_server.stop();
         return 0;
     }
 
     TerminalUI ui(debug_mode, name);
     if (!ui.init()) {
+        chat_server.stop();
         return 1;
     }
 
     UdpHelloBroadcaster broadcaster(
-            name, kDiscoveryUdpPort, kFixedTcpPort, "127.0.0.1",
+            name, kDiscoveryUdpPort, chat_port, "127.0.0.1",
             [&ui](const std::string& peer_name) { ui.upsert_peer(peer_name); });
     if (!broadcaster.start()) {
+        chat_server.stop();
         return 1;
     }
     ui.run();
     broadcaster.stop();
+    chat_server.stop();
     return 0;
 }
