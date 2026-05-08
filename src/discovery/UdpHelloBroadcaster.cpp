@@ -22,12 +22,14 @@ int64_t unix_epoch_ms() {
 UdpHelloBroadcaster::UdpHelloBroadcaster(std::string username, uint16_t udp_port,
                                      uint16_t tcp_port, std::string payload_ip,
                                      std::function<void(const std::string&, const std::string&, uint16_t)>
-                                             on_peer_seen)
+                                             on_peer_seen,
+                                     bool debug_logs)
         : username_(std::move(username)),
             udp_port_(udp_port),
             tcp_port_(tcp_port),
             payload_ip_(std::move(payload_ip)),
-            on_peer_seen_(std::move(on_peer_seen)) {}
+            on_peer_seen_(std::move(on_peer_seen)),
+            debug_logs_(debug_logs) {}
 
 UdpHelloBroadcaster::~UdpHelloBroadcaster() { stop(); }
 
@@ -135,12 +137,14 @@ void UdpHelloBroadcaster::run_receive_loop() {
             continue;
         }
 
-        char ipbuf[INET_ADDRSTRLEN];
-        const char* src_ip = inet_ntop(AF_INET, &from.sin_addr, ipbuf, sizeof(ipbuf));
-        std::cout << "received packet type=" << pkt.type() << " username=" << pkt.username()
-                        << " ip=" << pkt.ip() << " tcp_port=" << pkt.tcp_port()
-                        << " from=" << (src_ip ? src_ip : "unknown")
-                        << ":" << ntohs(from.sin_port) << "\n";
+        if (debug_logs_) {
+            char ipbuf[INET_ADDRSTRLEN];
+            const char* src_ip = inet_ntop(AF_INET, &from.sin_addr, ipbuf, sizeof(ipbuf));
+            std::cout << "received packet type=" << pkt.type() << " username=" << pkt.username()
+                            << " ip=" << pkt.ip() << " tcp_port=" << pkt.tcp_port()
+                            << " from=" << (src_ip ? src_ip : "unknown")
+                            << ":" << ntohs(from.sin_port) << "\n";
+        }
         if (on_peer_seen_ && !pkt.username().empty() && !pkt.ip().empty()) {
             on_peer_seen_(pkt.username(), pkt.ip(), static_cast<uint16_t>(pkt.tcp_port()));
         }
@@ -171,7 +175,9 @@ bool UdpHelloBroadcaster::send_hello() {
         return false;
     }
 
-    std::cout << "broadcast HELLO username=" << username_ << " ip=" << payload_ip_
-                    << " tcp_port=" << tcp_port_ << " udp_port=" << udp_port_ << "\n";
+    if (debug_logs_) {
+        std::cout << "broadcast HELLO username=" << username_ << " ip=" << payload_ip_
+                        << " tcp_port=" << tcp_port_ << " udp_port=" << udp_port_ << "\n";
+    }
     return true;
 }
