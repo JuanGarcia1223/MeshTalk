@@ -80,6 +80,35 @@ void ChatServer::stop() {
     port_ = 0;
 }
 
+bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::string& peer_name) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        std::cerr << "chat: connect socket create failed for " << peer_name << "\n";
+        return false;
+    }
+
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip.c_str(), &dst.sin_addr) != 1) {
+        std::cerr << "chat: invalid peer IP '" << ip << "' for " << peer_name << "\n";
+        close(fd);
+        return false;
+    }
+
+    std::cout << "chat: connecting to " << peer_name << " at " << ip << ":" << port << "\n";
+    if (connect(fd, reinterpret_cast<sockaddr*>(&dst), sizeof(dst)) < 0) {
+        std::cerr << "chat: connect failed to " << peer_name << " (" << ip << ":" << port
+                  << ")\n";
+        close(fd);
+        return false;
+    }
+
+    std::cout << "chat: connected to " << peer_name << " (" << ip << ":" << port << ")\n";
+    close(fd);
+    return true;
+}
+
 void ChatServer::accept_loop() {
     while (running_) {
         sockaddr_in peer{};

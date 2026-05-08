@@ -10,7 +10,8 @@ class UdpHelloBroadcaster {
 public:
     UdpHelloBroadcaster(std::string username, uint16_t udp_port, uint16_t tcp_port,
                             std::string payload_ip = "127.0.0.1",
-                            std::function<void(const std::string&)> on_peer_seen = {});
+                            std::function<void(const std::string&, const std::string&, uint16_t)>
+                                    on_peer_seen = {});
     ~UdpHelloBroadcaster();
 
     UdpHelloBroadcaster(const UdpHelloBroadcaster&) = delete;
@@ -28,7 +29,7 @@ private:
     uint16_t udp_port_;
     uint16_t tcp_port_;
     std::string payload_ip_;
-    std::function<void(const std::string&)> on_peer_seen_;
+    std::function<void(const std::string&, const std::string&, uint16_t)> on_peer_seen_;
 
     int send_sockfd_{-1};
     int recv_sockfd_{-1};

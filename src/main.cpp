@@ -78,7 +78,11 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    TerminalUI ui(debug_mode, name);
+    TerminalUI ui(
+            debug_mode, name,
+            [&chat_server](const TerminalUI::PeerInfo& peer) {
+                chat_server.connect_to(peer.ip, peer.tcp_port, peer.username);
+            });
     if (!ui.init()) {
         chat_server.stop();
         return 1;
@@ -86,7 +90,9 @@ int main(int argc, char** argv) {
 
     UdpHelloBroadcaster broadcaster(
             name, kDiscoveryUdpPort, chat_port, "127.0.0.1",
-            [&ui](const std::string& peer_name) { ui.upsert_peer(peer_name); });
+            [&ui](const std::string& peer_name, const std::string& peer_ip, uint16_t peer_port) {
+                ui.upsert_peer(peer_name, peer_ip, peer_port);
+            });
     if (!broadcaster.start()) {
         chat_server.stop();
         return 1;

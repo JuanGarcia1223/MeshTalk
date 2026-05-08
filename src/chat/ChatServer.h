@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <string>
 #include <thread>
 
 class ChatServer {
@@ -14,6 +15,7 @@ public:
 
     bool start();
     void stop();
+    bool connect_to(const std::string& ip, uint16_t port, const std::string& peer_name);
 
     uint16_t port() const { return port_; }
 
