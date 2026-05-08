@@ -21,7 +21,8 @@ int64_t unix_epoch_ms() {
 
 UdpHelloBroadcaster::UdpHelloBroadcaster(std::string username, uint16_t udp_port,
                                      uint16_t tcp_port, std::string payload_ip,
-                                     std::function<void(const std::string&)> on_peer_seen)
+                                     std::function<void(const std::string&, const std::string&, uint16_t)>
+                                             on_peer_seen)
         : username_(std::move(username)),
             udp_port_(udp_port),
             tcp_port_(tcp_port),
@@ -140,8 +141,8 @@ void UdpHelloBroadcaster::run_receive_loop() {
                         << " ip=" << pkt.ip() << " tcp_port=" << pkt.tcp_port()
                         << " from=" << (src_ip ? src_ip : "unknown")
                         << ":" << ntohs(from.sin_port) << "\n";
-        if (on_peer_seen_ && !pkt.username().empty()) {
-            on_peer_seen_(pkt.username());
+        if (on_peer_seen_ && !pkt.username().empty() && !pkt.ip().empty()) {
+            on_peer_seen_(pkt.username(), pkt.ip(), static_cast<uint16_t>(pkt.tcp_port()));
         }
     }
 }
