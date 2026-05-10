@@ -85,7 +85,11 @@ int main(int argc, char** argv) {
 
     TerminalUI ui(
             debug_mode, name,
-            [&chat_server](const TerminalUI::PeerInfo& peer) {
+            [&chat_server, &name, chat_port](const TerminalUI::PeerInfo& peer) {
+                if (peer.username == name && peer.tcp_port == chat_port) {
+                    std::cout << "chat: ignoring self-connect to " << peer.username << "\n";
+                    return;
+                }
                 chat_server.connect_to(peer.ip, peer.tcp_port, peer.username);
             });
     if (!ui.init()) {
@@ -95,8 +99,11 @@ int main(int argc, char** argv) {
 
     UdpHelloBroadcaster broadcaster(
             name, kDiscoveryUdpPort, chat_port, "127.0.0.1",
-            [&ui, &chat_server](const std::string& peer_name, const std::string& peer_ip,
+            [&ui, &chat_server, &name, chat_port](const std::string& peer_name, const std::string& peer_ip,
                                 uint16_t peer_port) {
+                if (peer_name == name && peer_port == chat_port) {
+                    return;
+                }
                 ui.upsert_peer(peer_name, peer_ip, peer_port);
                 chat_server.register_peer(peer_name, peer_ip);
             },
