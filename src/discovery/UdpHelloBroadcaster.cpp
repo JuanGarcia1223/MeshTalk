@@ -137,6 +137,11 @@ void UdpHelloBroadcaster::run_receive_loop() {
             continue;
         }
 
+        // Ignore our own discovery broadcasts.
+        if (pkt.username() == username_ && pkt.tcp_port() == tcp_port_) {
+            continue;
+        }
+
         if (debug_logs_) {
             char ipbuf[INET_ADDRSTRLEN];
             const char* src_ip = inet_ntop(AF_INET, &from.sin_addr, ipbuf, sizeof(ipbuf));
