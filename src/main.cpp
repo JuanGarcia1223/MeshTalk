@@ -34,17 +34,21 @@ void on_signal(int) { g_keep_running = false; }
 int main(int argc, char** argv) {
     bool debug_mode = false;
     bool no_ui_mode = false;
+    bool udp_debug = false;
     std::string name;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--debug") == 0) {
             debug_mode = true;
+        } else if (std::strcmp(argv[i], "--udp-debug") == 0) {
+            udp_debug = true;
         } else if (std::strcmp(argv[i], "--noui") == 0) {
             no_ui_mode = true;
         } else if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
             name = argv[++i];
         } else {
-            std::cerr << "usage: " << argv[0] << " --name <one-word-name> [--debug] [--noui]\n";
+            std::cerr << "usage: " << argv[0]
+                      << " --name <one-word-name> [--debug] [--udp-debug] [--noui]\n";
             return 1;
         }
     }
@@ -64,7 +68,8 @@ int main(int argc, char** argv) {
     const uint16_t chat_port = chat_server.port();
 
     if (no_ui_mode) {
-        UdpHelloBroadcaster broadcaster(name, kDiscoveryUdpPort, chat_port, "127.0.0.1");
+        UdpHelloBroadcaster broadcaster(
+            name, kDiscoveryUdpPort, chat_port, "127.0.0.1", {}, udp_debug);
         if (!broadcaster.start()) {
             chat_server.stop();
             return 1;
@@ -90,9 +95,12 @@ int main(int argc, char** argv) {
 
     UdpHelloBroadcaster broadcaster(
             name, kDiscoveryUdpPort, chat_port, "127.0.0.1",
-            [&ui](const std::string& peer_name, const std::string& peer_ip, uint16_t peer_port) {
+            [&ui, &chat_server](const std::string& peer_name, const std::string& peer_ip,
+                                uint16_t peer_port) {
                 ui.upsert_peer(peer_name, peer_ip, peer_port);
-            });
+                chat_server.register_peer(peer_name, peer_ip);
+            },
+            udp_debug);
     if (!broadcaster.start()) {
         chat_server.stop();
         return 1;

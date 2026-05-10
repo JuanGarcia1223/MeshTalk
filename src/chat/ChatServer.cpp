@@ -109,6 +109,14 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
     return true;
 }
 
+void ChatServer::register_peer(const std::string& peer_name, const std::string& ip) {
+    if (peer_name.empty() || ip.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    name_by_ip_[ip] = peer_name;
+}
+
 void ChatServer::accept_loop() {
     while (running_) {
         sockaddr_in peer{};
@@ -126,9 +134,17 @@ void ChatServer::accept_loop() {
 
         char ipbuf[INET_ADDRSTRLEN];
         const char* peer_ip = inet_ntop(AF_INET, &peer.sin_addr, ipbuf, sizeof(ipbuf));
-        std::cout << "chat: accepted connection from "
-                            << (peer_ip ? peer_ip : "unknown") << ":" << ntohs(peer.sin_port)
-                            << "\n";
+        const std::string ip = (peer_ip ? peer_ip : "unknown");
+        std::string peer_name = "unknown";
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            auto it = name_by_ip_.find(ip);
+            if (it != name_by_ip_.end()) {
+                peer_name = it->second;
+            }
+        }
+        std::cout << "chat: accepted connection from " << ip << ":" << ntohs(peer.sin_port)
+                            << " name=" << peer_name << "\n";
         close(fd);
     }
 }
