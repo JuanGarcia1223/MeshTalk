@@ -78,4 +78,5 @@ private:
     std::map<std::string, PeerInfo> peers_;
     std::vector<PeerInfo> people_rows_;
     int selected_peer_index_{-1};
+    std::string input_buffer_;
 };
