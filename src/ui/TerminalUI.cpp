@@ -92,7 +92,8 @@ void TerminalUI::run() {
             }
         } else if (input == NCKEY_ENTER || input == '\n' || input == '\r') {
             activate_selected_peer();
-        } else if (nckey_mouse_p(input) && input == NCKEY_BUTTON1) {
+        } else if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
+                             (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
             handle_people_click(in.y, in.x);
         }
 

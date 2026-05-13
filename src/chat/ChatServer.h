@@ -5,6 +5,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <unordered_map>
 
 class ChatServer {
@@ -24,6 +25,7 @@ public:
 
 private:
     void accept_loop();
+    static std::string endpoint_key(const std::string& ip, uint16_t port);
 
     int listen_fd_{-1};
     uint16_t port_{0};
@@ -31,4 +33,6 @@ private:
     std::thread accept_thread_;
     std::mutex peers_mutex_;
     std::unordered_map<std::string, std::string> name_by_ip_;
+    std::mutex outbound_mutex_;
+    std::unordered_map<std::string, int> outbound_fd_by_endpoint_;
 };

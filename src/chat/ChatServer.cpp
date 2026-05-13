@@ -11,6 +11,10 @@
 
 ChatServer::~ChatServer() { stop(); }
 
+std::string ChatServer::endpoint_key(const std::string& ip, uint16_t port) {
+    return ip + ":" + std::to_string(port);
+}
+
 bool ChatServer::start() {
     if (running_) {
         return true;
@@ -77,10 +81,29 @@ void ChatServer::stop() {
         close(listen_fd_);
         listen_fd_ = -1;
     }
+    {
+        std::lock_guard<std::mutex> lock(outbound_mutex_);
+        for (auto& kv : outbound_fd_by_endpoint_) {
+            if (kv.second >= 0) {
+                close(kv.second);
+            }
+        }
+        outbound_fd_by_endpoint_.clear();
+    }
     port_ = 0;
 }
 
 bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::string& peer_name) {
+    const std::string key = endpoint_key(ip, port);
+    {
+        std::lock_guard<std::mutex> lock(outbound_mutex_);
+        auto it = outbound_fd_by_endpoint_.find(key);
+        if (it != outbound_fd_by_endpoint_.end() && it->second >= 0) {
+            std::cout << "chat: already connected to " << peer_name << " (" << key << ")\n";
+            return true;
+        }
+    }
+
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         std::cerr << "chat: connect socket create failed for " << peer_name << "\n";
@@ -105,7 +128,10 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
     }
 
     std::cout << "chat: connected to " << peer_name << " (" << ip << ":" << port << ")\n";
-    close(fd);
+    {
+        std::lock_guard<std::mutex> lock(outbound_mutex_);
+        outbound_fd_by_endpoint_[key] = fd;
+    }
     return true;
 }
 
