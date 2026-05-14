@@ -59,7 +59,7 @@ void TerminalUI::run() {
         return;
     }
     running_ = true;
-    add_debug("press q to quit");
+    add_debug("press Ctrl+C to quit");
     render();
 
     ncinput in{};
@@ -76,7 +76,9 @@ void TerminalUI::run() {
                 (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_REPEAT ||
                  in.evtype == NCTYPE_UNKNOWN);
 
-        if (key_action && (input == static_cast<uint32_t>('q') || input == static_cast<uint32_t>('Q'))) {
+        if (key_action &&
+            (input == static_cast<uint32_t>('c') || input == static_cast<uint32_t>('C')) &&
+            (ncinput_ctrl_p(&in) || in.ctrl)) {
             running_ = false;
             break;
         }
