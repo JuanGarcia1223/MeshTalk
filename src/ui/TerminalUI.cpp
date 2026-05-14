@@ -107,7 +107,7 @@ void TerminalUI::run() {
                              (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
             handle_people_click(in.y, in.x);
         } else if (key_action && input >= 32 && input <= 126) {
-            if (input_buffer_.size() < 512) {
+            if (input_buffer_.size() < 4096) {
                 input_buffer_.push_back(static_cast<char>(input));
             }
         }
@@ -399,10 +399,17 @@ void TerminalUI::draw_chat() {
         return;
     }
 
-    const int input_y = static_cast<int>(rows) - 4;
-    const int input_h = 3;
+    const int max_input_h = static_cast<int>(rows) - 2;
     const int input_w = static_cast<int>(cols) - 2;
+    const int inner_w = std::max(1, input_w - 2);
     const uint64_t input_border_ch = make_channels(0xc4, 0xb5, 0xfd, 0x0f, 0x17, 0x2a);
+
+    const std::string all_text = "> " + input_buffer_;
+    const int text_lines =
+            std::max(1, static_cast<int>((all_text.size() + static_cast<size_t>(inner_w) - 1) /
+                                         static_cast<size_t>(inner_w)));
+    const int input_h = std::min(max_input_h, text_lines + 2);
+    const int input_y = static_cast<int>(rows) - 1 - input_h;
 
     ncplane_cursor_move_yx(chat_plane_, input_y, 1);
     ncplane_rounded_box_sized(chat_plane_, 0, input_border_ch, input_h, input_w, 0);
@@ -410,12 +417,26 @@ void TerminalUI::draw_chat() {
     ncplane_set_channels(chat_plane_, text_ch);
     ncplane_putstr_yx(chat_plane_, input_y, 3, " Input ");
 
-    std::string line = "> " + input_buffer_;
-    const size_t max_len = (cols > 6) ? static_cast<size_t>(cols - 6) : 0;
-    if (line.size() > max_len) {
-        line = line.substr(line.size() - max_len);
+    std::vector<std::string> wrapped;
+    for (size_t i = 0; i < all_text.size(); i += static_cast<size_t>(inner_w)) {
+        wrapped.push_back(all_text.substr(i, static_cast<size_t>(inner_w)));
     }
-    ncplane_putstr_yx(chat_plane_, input_y + 1, 2, line.c_str());
+    if (wrapped.empty()) {
+        wrapped.push_back("> ");
+    }
+
+    const int visible = input_h - 2;
+    int start = static_cast<int>(wrapped.size()) - visible;
+    if (start < 0) {
+        start = 0;
+    }
+    for (int i = 0; i < visible; ++i) {
+        const int idx = start + i;
+        if (idx >= static_cast<int>(wrapped.size())) {
+            break;
+        }
+        ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped[idx].c_str());
+    }
 }
 
 void TerminalUI::draw_debug() {
