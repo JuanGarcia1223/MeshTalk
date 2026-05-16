@@ -307,38 +307,36 @@ void TerminalUI::draw_contacts() {
     }
 
     std::vector<PeerInfo> peers;
+    peers.push_back(PeerInfo{"self", "", 0});
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
         for (const auto& kv : peers_) {
+            if (kv.second.username == "self") {
+                continue;
+            }
             peers.push_back(kv.second);
         }
     }
     people_rows_ = peers;
-    if (people_rows_.empty()) {
-        selected_peer_index_ = -1;
-    } else if (selected_peer_index_ < 0 ||
-                         selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
+    if (selected_peer_index_ < 0 ||
+        selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
         selected_peer_index_ = 0;
     }
 
     ncplane_set_channels(people_plane_, text_ch);
-    if (peers.empty()) {
-        ncplane_putstr_yx(people_plane_, 2, 1, "(no peers yet)");
-    } else {
-        for (unsigned i = 0; i < peers.size(); ++i) {
-            const int y = 2 + static_cast<int>(i);
-            if (y >= static_cast<int>(rows) - 1) {
-                break;
-            }
-            if (static_cast<int>(i) == selected_peer_index_) {
-                ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
-            }
-            std::string line = "• " + peers[i].username;
-            line = line.substr(0, cols - 2);
-            ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
-            if (static_cast<int>(i) == selected_peer_index_) {
-                ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
-            }
+    for (unsigned i = 0; i < peers.size(); ++i) {
+        const int y = 2 + static_cast<int>(i);
+        if (y >= static_cast<int>(rows) - 1) {
+            break;
+        }
+        if (static_cast<int>(i) == selected_peer_index_) {
+            ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
+        }
+        std::string line = "• " + peers[i].username;
+        line = line.substr(0, cols - 2);
+        ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
+        if (static_cast<int>(i) == selected_peer_index_) {
+            ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
         }
     }
 }
@@ -379,6 +377,9 @@ bool TerminalUI::activate_selected_peer() {
         return false;
     }
     const PeerInfo peer = people_rows_[selected_peer_index_];
+    if (peer.username == "self" || peer.ip.empty() || peer.tcp_port == 0) {
+        return false;
+    }
     if (on_peer_activate_) {
         on_peer_activate_(peer);
         return true;
@@ -389,7 +390,14 @@ bool TerminalUI::activate_selected_peer() {
 void TerminalUI::draw_chat() {
     const uint64_t border_ch = make_channels(0x93, 0xc5, 0xfd, 0x0f, 0x17, 0x2a);
     const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
-    draw_panel(chat_plane_, " Chat ", border_ch, text_ch, 0x0f172a, 0x111c33, 0x0f172a, 0x111c33);
+
+    std::string chat_title = " Chat ";
+    if (selected_peer_index_ >= 0 &&
+        selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+        chat_title = " Chat: " + people_rows_[selected_peer_index_].username + " ";
+    }
+    draw_panel(chat_plane_, chat_title, border_ch, text_ch, 0x0f172a, 0x111c33, 0x0f172a,
+               0x111c33);
 
     if (!chat_plane_) {
         return;
