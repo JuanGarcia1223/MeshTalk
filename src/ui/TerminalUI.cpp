@@ -3,33 +3,81 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
-#include <iostream>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include <utility>
 
 namespace {
 uint64_t make_channels(unsigned fg_r, unsigned fg_g, unsigned fg_b, unsigned bg_r,
-                                             unsigned bg_g, unsigned bg_b) {
+                       unsigned bg_g, unsigned bg_b) {
     uint64_t ch = 0;
     ncchannels_set_fg_rgb8(&ch, fg_r, fg_g, fg_b);
     ncchannels_set_bg_rgb8(&ch, bg_r, bg_g, bg_b);
     return ch;
 }
-}    // namespace
+
+std::vector<std::string> wrap_text(const std::string& text, int width) {
+    std::vector<std::string> out;
+    if (width <= 0) {
+        return out;
+    }
+    if (text.empty()) {
+        out.push_back("");
+        return out;
+    }
+    for (size_t i = 0; i < text.size(); i += static_cast<size_t>(width)) {
+        out.push_back(text.substr(i, static_cast<size_t>(width)));
+    }
+    return out;
+}
+
+std::string local_datetime_now() {
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const std::time_t tt = system_clock::to_time_t(now);
+    std::tm tm{};
+    localtime_r(&tt, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M");
+    return oss.str();
+}
+
+std::string normalize_datetime_display(const std::string& input) {
+    if (input.empty()) {
+        return local_datetime_now();
+    }
+
+    std::string out = input;
+    std::replace(out.begin(), out.end(), 'T', ' ');
+    if (!out.empty() && out.back() == 'Z') {
+        out.pop_back();
+    }
+
+    // Prefer "YYYY-MM-DD HH:MM" when enough data exists.
+    if (out.size() >= 16) {
+        return out.substr(0, 16);
+    }
+    return out;
+}
+}  // namespace
 
 TerminalUI::TerminalUI(bool debug_mode, std::string self_name,
-                                             std::function<void(const PeerInfo&)> on_peer_activate,
-                                             std::function<void(const PeerInfo&, const std::string&)> on_send_chat)
-        : debug_mode_(debug_mode),
-            self_name_(std::move(self_name)),
-            on_peer_activate_(std::move(on_peer_activate)),
-            on_send_chat_(std::move(on_send_chat)) {}
+                       std::function<void(const PeerInfo&)> on_peer_activate,
+                       std::function<bool(const PeerInfo&, const std::string&)> on_send_chat)
+    : debug_mode_(debug_mode),
+      self_name_(std::move(self_name)),
+      on_peer_activate_(std::move(on_peer_activate)),
+      on_send_chat_(std::move(on_send_chat)) {}
 
 TerminalUI::~TerminalUI() { stop(); }
 
 bool TerminalUI::init() {
     notcurses_options opts{};
     opts.flags = NCOPTION_NO_WINCH_SIGHANDLER;
+
     tty_fp_ = std::fopen("/dev/tty", "w");
     if (!tty_fp_) {
         return false;
@@ -61,6 +109,7 @@ void TerminalUI::run() {
     if (!nc_ || running_) {
         return;
     }
+
     running_ = true;
     add_debug("press Ctrl+C to quit");
     render();
@@ -68,16 +117,17 @@ void TerminalUI::run() {
     ncinput in{};
     while (running_) {
         timespec ts{};
-        ts.tv_sec = 0;
         ts.tv_nsec = 200000000;
         const uint32_t input = notcurses_get(nc_, &ts, &in);
+
         if (input == 0) {
             render();
             continue;
         }
+
         const bool key_action =
-                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_REPEAT ||
-                 in.evtype == NCTYPE_UNKNOWN);
+            (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_REPEAT ||
+             in.evtype == NCTYPE_UNKNOWN);
 
         if (key_action &&
             (input == static_cast<uint32_t>('c') || input == static_cast<uint32_t>('C')) &&
@@ -96,54 +146,47 @@ void TerminalUI::run() {
             }
         } else if (key_action && input == NCKEY_DOWN) {
             if (!people_rows_.empty()) {
-                selected_peer_index_ = (selected_peer_index_ + 1) %
-                                                             static_cast<int>(people_rows_.size());
+                selected_peer_index_ =
+                    (selected_peer_index_ + 1) % static_cast<int>(people_rows_.size());
             }
         } else if (key_action && (input == NCKEY_ENTER || input == '\n' || input == '\r')) {
             if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
                 selected_peer_index_ < static_cast<int>(people_rows_.size())) {
                 const std::string text = input_buffer_;
                 const PeerInfo peer = people_rows_[selected_peer_index_];
+
                 if (peer.username == "self") {
-                    std::cout << "note: " << text << "\n";
+                    add_chat_message("self", true, text, local_datetime_now());
                 } else if (on_send_chat_) {
-                    on_send_chat_(peer, text);
+                    if (on_send_chat_(peer, text)) {
+                        add_chat_message(peer.username, true, text, local_datetime_now());
+                    }
                 }
                 input_buffer_.clear();
             }
-        } else if (key_action && (input == NCKEY_BACKSPACE || input == 127 || input == '\b')) {
+        } else if (key_action &&
+                   (input == NCKEY_BACKSPACE || input == 127 || input == '\b')) {
             if (!input_buffer_.empty()) {
                 input_buffer_.pop_back();
             }
         } else if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
-                             (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
+                   (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
             handle_people_click(in.y, in.x);
         } else if (key_action && input >= 32 && input <= 126) {
-            if (input_buffer_.size() < 4096) {
+            if (input_buffer_.size() < 8192) {
                 input_buffer_.push_back(static_cast<char>(input));
             }
         }
 
-        if (debug_mode_) {
-            if (input == NCKEY_RESIZE) {
-                add_debug("resize event");
-            }
-        }
         render();
     }
 }
 
-void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port) {
-    if (name.empty() || ip.empty() || tcp_port == 0) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(peers_mutex_);
-    peers_[name] = PeerInfo{name, ip, tcp_port};
-}
-
 void TerminalUI::stop() {
+    running_ = false;
     destroy_layout();
     stop_stdio_capture();
+
     if (nc_) {
         notcurses_stop(nc_);
         nc_ = nullptr;
@@ -152,10 +195,34 @@ void TerminalUI::stop() {
         std::fclose(tty_fp_);
         tty_fp_ = nullptr;
     }
-    running_ = false;
+}
+
+void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port) {
+    if (name.empty() || ip.empty() || tcp_port == 0 || name == self_name_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    peers_[name] = PeerInfo{name, ip, tcp_port};
+}
+
+void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
+                                  const std::string& content, const std::string& datetime) {
+    if (peer_name.empty() || content.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(chat_mutex_);
+    auto& thread = chats_by_peer_[peer_name];
+    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime)});
+    if (thread.size() > 2000) {
+        thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
+    }
 }
 
 void TerminalUI::render() {
+    if (!nc_) {
+        return;
+    }
+
     ncplane* stdp = notcurses_stdplane(nc_);
     if (!stdp) {
         return;
@@ -188,13 +255,13 @@ bool TerminalUI::ensure_layout() {
     unsigned rows = 0;
     unsigned cols = 0;
     ncplane_dim_yx(stdp, &rows, &cols);
-    if (rows < 8 || cols < 40) {
+    if (rows < 10 || cols < 50) {
         destroy_layout();
         return false;
     }
 
     if (rows != last_rows_ || cols != last_cols_ || !people_plane_ || !chat_plane_ ||
-            (debug_mode_ && !debug_plane_)) {
+        (debug_mode_ && !debug_plane_)) {
         rebuild_layout(rows, cols);
     }
     return people_plane_ && chat_plane_ && (!debug_mode_ || debug_plane_);
@@ -208,6 +275,7 @@ void TerminalUI::rebuild_layout(unsigned rows, unsigned cols) {
 
     int app_x = 0;
     int app_w = static_cast<int>(cols);
+
     if (debug_mode_) {
         app_w = static_cast<int>(cols / 2);
         const int debug_x = app_w;
@@ -221,7 +289,7 @@ void TerminalUI::rebuild_layout(unsigned rows, unsigned cols) {
         return;
     }
 
-    int people_w = std::max(12, (app_w * 20) / 100);
+    int people_w = std::max(14, (app_w * 20) / 100);
     int chat_w = app_w - people_w;
     if (chat_w < 12) {
         chat_w = 12;
@@ -263,8 +331,8 @@ ncplane* TerminalUI::make_plane(int y, int x, int h, int w, const char* name) {
 }
 
 void TerminalUI::draw_panel(ncplane* plane, const std::string& title, uint64_t border_channels,
-                                                        uint64_t text_channels, uint32_t bg_ul, uint32_t bg_ur,
-                                                        uint32_t bg_ll, uint32_t bg_lr) {
+                            uint64_t text_channels, uint32_t bg_ul, uint32_t bg_ur,
+                            uint32_t bg_ll, uint32_t bg_lr) {
     if (!plane) {
         return;
     }
@@ -277,6 +345,7 @@ void TerminalUI::draw_panel(ncplane* plane, const std::string& title, uint64_t b
     }
 
     ncplane_erase(plane);
+
     uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
     ncchannels_set_bg_rgb(&ul, bg_ul);
     ncchannels_set_bg_rgb(&ur, bg_ur);
@@ -289,7 +358,7 @@ void TerminalUI::draw_panel(ncplane* plane, const std::string& title, uint64_t b
     ncplane_gradient(plane, 0, 0, rows, cols, " ", 0, ul, ur, ll, lr);
 
     ncplane_rounded_box_sized(plane, 0, border_channels, static_cast<int>(rows),
-                                                        static_cast<int>(cols), 0);
+                              static_cast<int>(cols), 0);
 
     if (!title.empty() && cols > 4) {
         ncplane_set_channels(plane, text_channels);
@@ -303,12 +372,15 @@ void TerminalUI::draw_panel(ncplane* plane, const std::string& title, uint64_t b
 void TerminalUI::draw_contacts() {
     const uint64_t border_ch = make_channels(0x86, 0xef, 0xac, 0x0b, 0x1c, 0x16);
     const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0b, 0x1c, 0x16);
+    const uint64_t selected_ch = make_channels(0xff, 0xff, 0xff, 0x1f, 0x60, 0x48);
+
     draw_panel(people_plane_, " People ", border_ch, text_ch, 0x0b1c16, 0x0b1c16, 0x10271f,
-                         0x10271f);
+               0x10271f);
 
     if (!people_plane_) {
         return;
     }
+
     unsigned rows = 0;
     unsigned cols = 0;
     ncplane_dim_yx(people_plane_, &rows, &cols);
@@ -321,31 +393,34 @@ void TerminalUI::draw_contacts() {
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
         for (const auto& kv : peers_) {
-            if (kv.second.username == "self") {
-                continue;
-            }
             peers.push_back(kv.second);
         }
     }
-    people_rows_ = peers;
-    if (selected_peer_index_ < 0 ||
-        selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
+    people_rows_ = std::move(peers);
+
+    if (selected_peer_index_ < 0 || selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
         selected_peer_index_ = 0;
     }
 
-    ncplane_set_channels(people_plane_, text_ch);
-    for (unsigned i = 0; i < peers.size(); ++i) {
+    for (size_t i = 0; i < people_rows_.size(); ++i) {
         const int y = 2 + static_cast<int>(i);
         if (y >= static_cast<int>(rows) - 1) {
             break;
         }
-        if (static_cast<int>(i) == selected_peer_index_) {
+
+        const bool selected = static_cast<int>(i) == selected_peer_index_;
+        ncplane_set_channels(people_plane_, selected ? selected_ch : text_ch);
+        if (selected) {
             ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
         }
-        std::string line = "• " + peers[i].username;
-        line = line.substr(0, cols - 2);
+
+        std::string line = "  " + people_rows_[i].username;
+        if (line.size() > cols - 2) {
+            line.resize(cols - 2);
+        }
         ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
-        if (static_cast<int>(i) == selected_peer_index_) {
+
+        if (selected) {
             ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
         }
     }
@@ -359,6 +434,7 @@ bool TerminalUI::handle_people_click(int abs_y, int abs_x) {
     int plane_y = 0;
     int plane_x = 0;
     ncplane_abs_yx(people_plane_, &plane_y, &plane_x);
+
     unsigned h = 0;
     unsigned w = 0;
     ncplane_dim_yx(people_plane_, &h, &w);
@@ -366,10 +442,10 @@ bool TerminalUI::handle_people_click(int abs_y, int abs_x) {
     if (abs_y < plane_y || abs_x < plane_x) {
         return false;
     }
+
     const int rel_y = abs_y - plane_y;
     const int rel_x = abs_x - plane_x;
-    if (rel_y < 2 || rel_y >= static_cast<int>(h) - 1 || rel_x < 1 ||
-            rel_x >= static_cast<int>(w) - 1) {
+    if (rel_y < 2 || rel_y >= static_cast<int>(h) - 1 || rel_x < 1 || rel_x >= static_cast<int>(w) - 1) {
         return false;
     }
 
@@ -377,19 +453,21 @@ bool TerminalUI::handle_people_click(int abs_y, int abs_x) {
     if (idx < 0 || idx >= static_cast<int>(people_rows_.size())) {
         return false;
     }
+
     selected_peer_index_ = idx;
     return activate_selected_peer();
 }
 
 bool TerminalUI::activate_selected_peer() {
-    if (selected_peer_index_ < 0 ||
-            selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
+    if (selected_peer_index_ < 0 || selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
         return false;
     }
+
     const PeerInfo peer = people_rows_[selected_peer_index_];
     if (peer.username == "self" || peer.ip.empty() || peer.tcp_port == 0) {
         return false;
     }
+
     if (on_peer_activate_) {
         on_peer_activate_(peer);
         return true;
@@ -399,71 +477,165 @@ bool TerminalUI::activate_selected_peer() {
 
 void TerminalUI::draw_chat() {
     const uint64_t border_ch = make_channels(0x93, 0xc5, 0xfd, 0x0f, 0x17, 0x2a);
-    const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
+    const uint64_t base_text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
+    const uint64_t sender_ch = make_channels(0x86, 0xef, 0xac, 0x0f, 0x17, 0x2a);
+    const uint64_t receiver_ch = make_channels(0x93, 0xc5, 0xfd, 0x0f, 0x17, 0x2a);
+    const uint64_t dt_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
+    const uint64_t input_border_ch = make_channels(0xc4, 0xb5, 0xfd, 0x0f, 0x17, 0x2a);
 
-    std::string chat_title = " Chat ";
-    if (selected_peer_index_ >= 0 &&
-        selected_peer_index_ < static_cast<int>(people_rows_.size())) {
-        chat_title = " Chat: " + people_rows_[selected_peer_index_].username + " ";
+    std::string active_name = "self";
+    if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+        active_name = people_rows_[selected_peer_index_].username;
     }
-    draw_panel(chat_plane_, chat_title, border_ch, text_ch, 0x0f172a, 0x111c33, 0x0f172a,
-               0x111c33);
+
+    draw_panel(chat_plane_, " Chat: " + active_name + " ", border_ch, base_text_ch, 0x0f172a,
+               0x111c33, 0x0f172a, 0x111c33);
 
     if (!chat_plane_) {
         return;
     }
+
     unsigned rows = 0;
     unsigned cols = 0;
     ncplane_dim_yx(chat_plane_, &rows, &cols);
-    if (rows < 7 || cols < 8) {
+    if (rows < 8 || cols < 16) {
         return;
     }
 
-    const int max_input_h = static_cast<int>(rows) - 2;
     const int input_w = static_cast<int>(cols) - 2;
-    const int inner_w = std::max(1, input_w - 2);
-    const uint64_t input_border_ch = make_channels(0xc4, 0xb5, 0xfd, 0x0f, 0x17, 0x2a);
+    const int input_inner_w = std::max(1, input_w - 2);
 
-    const std::string all_text = "> " + input_buffer_;
-    const int text_lines =
-            std::max(1, static_cast<int>((all_text.size() + static_cast<size_t>(inner_w) - 1) /
-                                         static_cast<size_t>(inner_w)));
-    const int input_h = std::min(max_input_h, text_lines + 2);
+    const std::string input_text = "> " + input_buffer_;
+    const int input_text_lines =
+        std::max(1, static_cast<int>((input_text.size() + static_cast<size_t>(input_inner_w) - 1) /
+                                     static_cast<size_t>(input_inner_w)));
+
+    const int max_input_h = std::max(3, static_cast<int>(rows) - 4);
+    const int input_h = std::min(max_input_h, input_text_lines + 2);
     const int input_y = static_cast<int>(rows) - 1 - input_h;
+
+    struct VisualLine {
+        bool sender{false};
+        std::string left;
+        std::string right;
+    };
+
+    std::vector<ChatItem> items;
+    {
+        std::lock_guard<std::mutex> lock(chat_mutex_);
+        auto it = chats_by_peer_.find(active_name);
+        if (it != chats_by_peer_.end()) {
+            items = it->second;
+        }
+    }
+
+    std::vector<VisualLine> visual;
+    const int content_w = static_cast<int>(cols) - 2;
+
+    for (const ChatItem& msg : items) {
+        const std::string prefix = msg.sender ? "S: " : "R: ";
+        const std::string text = prefix + msg.content;
+        const int dtw = static_cast<int>(msg.datetime.size());
+
+        bool inline_dt = false;
+        int first_w = content_w;
+        if (!msg.datetime.empty() && content_w >= dtw + 8) {
+            inline_dt = true;
+            first_w = content_w - dtw - 1;
+        }
+
+        std::vector<std::string> text_lines;
+        if (first_w > 0) {
+            if (static_cast<int>(text.size()) <= first_w) {
+                text_lines.push_back(text);
+            } else {
+                text_lines.push_back(text.substr(0, static_cast<size_t>(first_w)));
+                const auto more = wrap_text(text.substr(static_cast<size_t>(first_w)), content_w);
+                text_lines.insert(text_lines.end(), more.begin(), more.end());
+            }
+        }
+
+        if (text_lines.empty()) {
+            text_lines.push_back(prefix);
+        }
+
+        for (size_t i = 0; i < text_lines.size(); ++i) {
+            VisualLine line;
+            line.sender = msg.sender;
+            line.left = text_lines[i];
+            if (i == 0 && inline_dt) {
+                line.right = msg.datetime;
+            }
+            visual.push_back(std::move(line));
+        }
+
+        if (!inline_dt && !msg.datetime.empty()) {
+            visual.push_back(VisualLine{msg.sender, "", msg.datetime});
+        }
+    }
+
+    const int chat_top = 1;
+    const int chat_bottom = input_y - 1;
+    const int visible_lines = std::max(0, chat_bottom - chat_top + 1);
+
+    int start = 0;
+    if (static_cast<int>(visual.size()) > visible_lines) {
+        start = static_cast<int>(visual.size()) - visible_lines;
+    }
+
+    int y = chat_top;
+    for (int i = start; i < static_cast<int>(visual.size()) && y <= chat_bottom; ++i, ++y) {
+        const VisualLine& vl = visual[i];
+        ncplane_set_channels(chat_plane_, vl.sender ? sender_ch : receiver_ch);
+
+        int max_left = content_w;
+        if (!vl.right.empty()) {
+            max_left = std::max(0, content_w - static_cast<int>(vl.right.size()) - 1);
+        }
+
+        std::string left = vl.left;
+        if (static_cast<int>(left.size()) > max_left) {
+            left.resize(static_cast<size_t>(max_left));
+        }
+
+        if (!left.empty()) {
+            ncplane_putstr_yx(chat_plane_, y, 1, left.c_str());
+        }
+
+        if (!vl.right.empty() && static_cast<int>(vl.right.size()) <= content_w) {
+            ncplane_set_channels(chat_plane_, dt_ch);
+            const int x = 1 + content_w - static_cast<int>(vl.right.size());
+            ncplane_putstr_yx(chat_plane_, y, x, vl.right.c_str());
+        }
+    }
 
     ncplane_cursor_move_yx(chat_plane_, input_y, 1);
     ncplane_rounded_box_sized(chat_plane_, 0, input_border_ch, input_h, input_w, 0);
-
-    ncplane_set_channels(chat_plane_, text_ch);
+    ncplane_set_channels(chat_plane_, base_text_ch);
     ncplane_putstr_yx(chat_plane_, input_y, 3, " Input ");
 
-    std::vector<std::string> wrapped;
-    for (size_t i = 0; i < all_text.size(); i += static_cast<size_t>(inner_w)) {
-        wrapped.push_back(all_text.substr(i, static_cast<size_t>(inner_w)));
-    }
-    if (wrapped.empty()) {
-        wrapped.push_back("> ");
+    const std::vector<std::string> wrapped_input = wrap_text(input_text, input_inner_w);
+    const int input_visible = input_h - 2;
+    int input_start = static_cast<int>(wrapped_input.size()) - input_visible;
+    if (input_start < 0) {
+        input_start = 0;
     }
 
-    const int visible = input_h - 2;
-    int start = static_cast<int>(wrapped.size()) - visible;
-    if (start < 0) {
-        start = 0;
-    }
-    for (int i = 0; i < visible; ++i) {
-        const int idx = start + i;
-        if (idx >= static_cast<int>(wrapped.size())) {
+    for (int i = 0; i < input_visible; ++i) {
+        const int idx = input_start + i;
+        if (idx >= static_cast<int>(wrapped_input.size())) {
             break;
         }
-        ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped[idx].c_str());
+        ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped_input[idx].c_str());
     }
 }
 
 void TerminalUI::draw_debug() {
     const uint64_t border_ch = make_channels(0xf5, 0xd0, 0xfe, 0x22, 0x12, 0x29);
     const uint64_t text_ch = make_channels(0xf8, 0xfa, 0xfc, 0x22, 0x12, 0x29);
+
     draw_panel(debug_plane_, " Debug ", border_ch, text_ch, 0x221229, 0x2a1633, 0x150b1f,
-                         0x1a1026);
+               0x1a1026);
 
     if (!debug_plane_) {
         return;
@@ -482,6 +654,7 @@ void TerminalUI::draw_debug() {
         std::lock_guard<std::mutex> lock(debug_mutex_);
         lines = debug_lines_;
     }
+
     const int total = static_cast<int>(lines.size());
     const int start = std::max(0, total - visible);
 
@@ -489,7 +662,9 @@ void TerminalUI::draw_debug() {
     int row = 1;
     for (int i = start; i < total && row < static_cast<int>(rows) - 1; ++i, ++row) {
         std::string line = lines[i];
-        line = line.substr(0, cols - 2);
+        if (line.size() > cols - 2) {
+            line.resize(cols - 2);
+        }
         ncplane_putstr_yx(debug_plane_, row, 1, line.c_str());
     }
 }
@@ -500,14 +675,16 @@ void TerminalUI::add_debug(const std::string& line) {
     }
     std::lock_guard<std::mutex> lock(debug_mutex_);
     debug_lines_.push_back(line);
-    if (debug_lines_.size() > 1000) {
-        debug_lines_.erase(debug_lines_.begin());
+    if (debug_lines_.size() > 2000) {
+        debug_lines_.erase(debug_lines_.begin(),
+                           debug_lines_.begin() + static_cast<long>(debug_lines_.size() - 2000));
     }
 }
 
 bool TerminalUI::start_stdio_capture() {
     int stdout_pipe[2];
     int stderr_pipe[2];
+
     if (pipe(stdout_pipe) != 0) {
         return false;
     }
@@ -599,7 +776,8 @@ void TerminalUI::capture_loop(int read_fd, const char* stream_name) {
                 pending.erase(0, pos);
                 break;
             }
-            std::string line = pending.substr(pos, newline - pos);
+
+            const std::string line = pending.substr(pos, newline - pos);
             if (debug_mode_) {
                 add_debug(std::string("[") + stream_name + "] " + line);
             }
