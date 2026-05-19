@@ -60,6 +60,9 @@ int main(int argc, char** argv) {
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
+#ifdef SIGPIPE
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
 
     ChatServer chat_server;
     if (!chat_server.start()) {
@@ -91,6 +94,9 @@ int main(int argc, char** argv) {
                     return;
                 }
                 chat_server.connect_to(peer.ip, peer.tcp_port, peer.username);
+            },
+            [&chat_server, &name](const TerminalUI::PeerInfo& peer, const std::string& text) {
+                chat_server.send_chat(name, peer.username, peer.ip, peer.tcp_port, text);
             });
     if (!ui.init()) {
         chat_server.stop();

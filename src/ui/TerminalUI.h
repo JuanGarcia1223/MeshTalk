@@ -21,7 +21,8 @@ public:
     };
 
     TerminalUI(bool debug_mode, std::string self_name,
-                         std::function<void(const PeerInfo&)> on_peer_activate = {});
+                         std::function<void(const PeerInfo&)> on_peer_activate = {},
+                         std::function<void(const PeerInfo&, const std::string&)> on_send_chat = {});
     ~TerminalUI();
 
     TerminalUI(const TerminalUI&) = delete;
@@ -57,6 +58,7 @@ private:
     std::atomic<bool> capture_running_{false};
     std::string self_name_;
     std::function<void(const PeerInfo&)> on_peer_activate_;
+    std::function<void(const PeerInfo&, const std::string&)> on_send_chat_;
     FILE* tty_fp_{nullptr};
     notcurses* nc_{nullptr};
     int orig_stdout_fd_{-1};

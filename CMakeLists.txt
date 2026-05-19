@@ -27,6 +27,7 @@ FetchContent_MakeAvailable(notcurses)
 
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
   proto/discovery.proto
+  proto/chat.proto
 )
 
 add_executable(meshtalk_demo

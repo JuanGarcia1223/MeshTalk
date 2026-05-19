@@ -5,8 +5,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 
 class ChatServer {
 public:
@@ -19,12 +19,15 @@ public:
     bool start();
     void stop();
     bool connect_to(const std::string& ip, uint16_t port, const std::string& peer_name);
+    bool send_chat(const std::string& from_user, const std::string& to_user,
+                   const std::string& ip, uint16_t port, const std::string& content);
     void register_peer(const std::string& peer_name, const std::string& ip);
 
     uint16_t port() const { return port_; }
 
 private:
     void accept_loop();
+    void handle_inbound_connection(int fd, const std::string& peer_ip, uint16_t peer_port);
     static std::string endpoint_key(const std::string& ip, uint16_t port);
 
     int listen_fd_{-1};
@@ -35,4 +38,5 @@ private:
     std::unordered_map<std::string, std::string> name_by_ip_;
     std::mutex outbound_mutex_;
     std::unordered_map<std::string, int> outbound_fd_by_endpoint_;
+    std::atomic<uint64_t> msg_counter_{0};
 };

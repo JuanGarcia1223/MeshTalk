@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <iostream>
 #include <utility>
 
 namespace {
@@ -17,10 +18,12 @@ uint64_t make_channels(unsigned fg_r, unsigned fg_g, unsigned fg_b, unsigned bg_
 }    // namespace
 
 TerminalUI::TerminalUI(bool debug_mode, std::string self_name,
-                                             std::function<void(const PeerInfo&)> on_peer_activate)
+                                             std::function<void(const PeerInfo&)> on_peer_activate,
+                                             std::function<void(const PeerInfo&, const std::string&)> on_send_chat)
         : debug_mode_(debug_mode),
             self_name_(std::move(self_name)),
-            on_peer_activate_(std::move(on_peer_activate)) {}
+            on_peer_activate_(std::move(on_peer_activate)),
+            on_send_chat_(std::move(on_send_chat)) {}
 
 TerminalUI::~TerminalUI() { stop(); }
 
@@ -97,8 +100,15 @@ void TerminalUI::run() {
                                                              static_cast<int>(people_rows_.size());
             }
         } else if (key_action && (input == NCKEY_ENTER || input == '\n' || input == '\r')) {
-            if (!input_buffer_.empty()) {
-                add_debug(std::string("[input] ") + input_buffer_);
+            if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
+                selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+                const std::string text = input_buffer_;
+                const PeerInfo peer = people_rows_[selected_peer_index_];
+                if (peer.username == "self") {
+                    std::cout << "note: " << text << "\n";
+                } else if (on_send_chat_) {
+                    on_send_chat_(peer, text);
+                }
                 input_buffer_.clear();
             }
         } else if (key_action && (input == NCKEY_BACKSPACE || input == 127 || input == '\b')) {
