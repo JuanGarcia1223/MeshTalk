@@ -255,6 +255,13 @@ void ChatServer::register_peer(const std::string& peer_name, const std::string& 
     name_by_ip_[ip] = peer_name;
 }
 
+void ChatServer::set_receive_handler(
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&)>
+        handler) {
+    std::lock_guard<std::mutex> lock(receive_handler_mutex_);
+    on_receive_ = std::move(handler);
+}
+
 void ChatServer::accept_loop() {
     while (running_) {
         sockaddr_in peer{};
@@ -323,6 +330,16 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                   << " msg_id=" << msg.msg_id()
                   << " ts=" << msg.iso_datetime()
                   << " content=\"" << msg.content() << "\"\n";
+
+        std::function<void(const std::string&, const std::string&, const std::string&, const std::string&)>
+            cb;
+        {
+            std::lock_guard<std::mutex> lock(receive_handler_mutex_);
+            cb = on_receive_;
+        }
+        if (cb) {
+            cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime());
+        }
     }
 
     close(fd);

@@ -7,7 +7,10 @@
 #include <cctype>
 #include <csignal>
 #include <cstring>
+#include <ctime>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -29,6 +32,17 @@ bool is_one_word(const std::string& value) {
 }
 
 void on_signal(int) { g_keep_running = false; }
+
+std::string local_datetime_now() {
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const std::time_t tt = system_clock::to_time_t(now);
+    std::tm tm{};
+    localtime_r(&tt, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
 }    // namespace
 
 int main(int argc, char** argv) {
@@ -96,7 +110,7 @@ int main(int argc, char** argv) {
                 chat_server.connect_to(peer.ip, peer.tcp_port, peer.username);
             },
             [&chat_server, &name](const TerminalUI::PeerInfo& peer, const std::string& text) {
-                chat_server.send_chat(name, peer.username, peer.ip, peer.tcp_port, text);
+                return chat_server.send_chat(name, peer.username, peer.ip, peer.tcp_port, text);
             });
     if (!ui.init()) {
         chat_server.stop();
@@ -114,6 +128,14 @@ int main(int argc, char** argv) {
                 chat_server.register_peer(peer_name, peer_ip);
             },
             udp_debug);
+    chat_server.set_receive_handler([&ui, &name](const std::string& from_user, const std::string& to_user,
+                                                  const std::string& content, const std::string& datetime) {
+        if (to_user != name) {
+            return;
+        }
+        const std::string display_time = datetime.empty() ? local_datetime_now() : datetime;
+        ui.add_chat_message(from_user, false, content, display_time);
+    });
     if (!broadcaster.start()) {
         chat_server.stop();
         return 1;
