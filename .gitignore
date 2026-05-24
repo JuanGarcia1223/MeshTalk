@@ -2,3 +2,4 @@ build
 IMPLEMENTATION_PLAN.md
 .cache/
 compile_commands.json
+.vscode
