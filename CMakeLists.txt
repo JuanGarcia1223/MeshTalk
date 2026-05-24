@@ -25,6 +25,17 @@ set(BUILD_TESTING OFF CACHE BOOL "Disable tests" FORCE)
 
 FetchContent_MakeAvailable(notcurses)
 
+# Pull SQLiteCpp and build it as a subproject.
+FetchContent_Declare(
+  SQLiteCpp
+  GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git
+  GIT_TAG master
+  GIT_SHALLOW TRUE
+)
+set(SQLITECPP_BUILD_TESTS OFF CACHE BOOL "Disable SQLiteCpp tests" FORCE)
+set(SQLITECPP_BUILD_EXAMPLES OFF CACHE BOOL "Disable SQLiteCpp examples" FORCE)
+FetchContent_MakeAvailable(SQLiteCpp)
+
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
   proto/discovery.proto
   proto/chat.proto
@@ -32,6 +43,7 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
 
 add_executable(meshtalk_demo
   src/main.cpp
+  src/db/SqliteTest.cpp
   src/chat/ChatServer.cpp
   src/discovery/UdpHelloBroadcaster.cpp
   src/ui/TerminalUI.cpp
@@ -57,6 +69,7 @@ endif()
 
 target_link_libraries(meshtalk_demo PRIVATE
   ${Protobuf_LIBRARIES}
+  SQLiteCpp
 )
 
 add_custom_target(run
