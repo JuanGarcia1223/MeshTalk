@@ -58,3 +58,9 @@ endif()
 target_link_libraries(meshtalk_demo PRIVATE
   ${Protobuf_LIBRARIES}
 )
+
+add_custom_target(run
+    COMMAND ${CMAKE_SOURCE_DIR}/run.sh
+    DEPENDS meshtalk_demo
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
