@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <ctime>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <utility>
 
@@ -73,6 +74,39 @@ TerminalUI::TerminalUI(bool debug_mode, std::string self_name,
       on_send_chat_(std::move(on_send_chat)) {}
 
 TerminalUI::~TerminalUI() { stop(); }
+
+bool TerminalUI::initDatabase() {
+    db_manager_ = std::make_unique<DatabaseManager>(self_name_);
+    if (!db_manager_->init()) {
+        std::cerr << "ui: failed to initialize database\n";
+        return false;
+    }
+
+    // Load all existing peers from database
+    std::vector<std::string> db_peers = db_manager_->getAllPeers();
+    for (const auto& peer_name : db_peers) {
+        // Add peer to chat map (will be displayed in people list)
+        // They will appear as offline until discovered via UDP
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        if (peers_.find(peer_name) == peers_.end()) {
+            peers_[peer_name] = PeerInfo{peer_name, "", 0};
+        }
+    }
+
+    // Load all messages from database
+    std::vector<ChatMessageRecord> records = db_manager_->loadAllMessages();
+    for (const auto& record : records) {
+        std::lock_guard<std::mutex> lock(chat_mutex_);
+        auto& thread = chats_by_peer_[record.peer_name];
+        thread.push_back(ChatItem{record.is_sender, record.content, normalize_datetime_display(record.timestamp)});
+        if (thread.size() > 2000) {
+            thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
+        }
+    }
+
+    add_debug("loaded " + std::to_string(records.size()) + " messages from database");
+    return true;
+}
 
 bool TerminalUI::init() {
     notcurses_options opts{};
@@ -203,6 +237,7 @@ void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uin
     }
     std::lock_guard<std::mutex> lock(peers_mutex_);
     peers_[name] = PeerInfo{name, ip, tcp_port};
+    online_peers_.insert(name);
 }
 
 void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
@@ -210,6 +245,12 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
     if (peer_name.empty() || content.empty()) {
         return;
     }
+
+    // Save to database
+    if (db_manager_) {
+        db_manager_->saveMessage(peer_name, sender, content, datetime);
+    }
+
     std::lock_guard<std::mutex> lock(chat_mutex_);
     auto& thread = chats_by_peer_[peer_name];
     thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime)});
@@ -373,6 +414,7 @@ void TerminalUI::draw_contacts() {
     const uint64_t border_ch = make_channels(0x86, 0xef, 0xac, 0x0b, 0x1c, 0x16);
     const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0b, 0x1c, 0x16);
     const uint64_t selected_ch = make_channels(0xff, 0xff, 0xff, 0x1f, 0x60, 0x48);
+    const uint64_t online_ch = make_channels(0x22, 0xc5, 0x5e, 0x0b, 0x1c, 0x16);  // Green for online dot
 
     draw_panel(people_plane_, " People ", border_ch, text_ch, 0x0b1c16, 0x0b1c16, 0x10271f,
                0x10271f);
@@ -389,12 +431,14 @@ void TerminalUI::draw_contacts() {
     }
 
     std::vector<PeerInfo> peers;
-    peers.push_back(PeerInfo{"self", "", 0});
+    std::set<std::string> online_set;
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
+        peers.push_back(PeerInfo{"self", "", 0});
         for (const auto& kv : peers_) {
             peers.push_back(kv.second);
         }
+        online_set = online_peers_;
     }
     people_rows_ = std::move(peers);
 
@@ -409,16 +453,46 @@ void TerminalUI::draw_contacts() {
         }
 
         const bool selected = static_cast<int>(i) == selected_peer_index_;
+        const bool is_self = people_rows_[i].username == "self";
+        const bool is_online = !is_self && online_set.count(people_rows_[i].username) > 0;
+
         ncplane_set_channels(people_plane_, selected ? selected_ch : text_ch);
         if (selected) {
             ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
         }
 
-        std::string line = "  " + people_rows_[i].username;
+        // Build line: "  ● username" or "  ○ username"
+        std::string line;
+        if (is_self) {
+            line = "  " + people_rows_[i].username;
+        } else {
+            // Use ● (filled circle) for online, ○ (empty circle) for offline
+            line = is_online ? "  ● " : "  ○ ";
+            line += people_rows_[i].username;
+        }
+
         if (line.size() > cols - 2) {
             line.resize(cols - 2);
         }
-        ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
+
+        // Draw the dot in green if online
+        if (!is_self && is_online && cols > 4) {
+            // Draw the prefix with green dot
+            ncplane_set_channels(people_plane_, online_ch);
+            ncplane_putstr_yx(people_plane_, y, 1, " ●");
+            // Draw the rest with normal text color
+            ncplane_set_channels(people_plane_, selected ? selected_ch : text_ch);
+            if (selected) {
+                ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
+            }
+            std::string name_part = " " + people_rows_[i].username;
+            if (name_part.size() > cols - 4) {
+                name_part.resize(cols - 4);
+            }
+            ncplane_putstr_yx(people_plane_, y, 3, name_part.c_str());
+        } else {
+            ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
+        }
 
         if (selected) {
             ncplane_off_styles(people_plane_, NCSTYLE_BOLD);

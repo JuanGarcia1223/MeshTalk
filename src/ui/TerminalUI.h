@@ -7,10 +7,14 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "db/DatabaseManager.h"
 
 class TerminalUI {
 public:
@@ -30,6 +34,8 @@ public:
                std::function<void(const PeerInfo&)> on_peer_activate = {},
                std::function<bool(const PeerInfo&, const std::string&)> on_send_chat = {});
     ~TerminalUI();
+
+    bool initDatabase();
 
     TerminalUI(const TerminalUI&) = delete;
     TerminalUI& operator=(const TerminalUI&) = delete;
@@ -96,8 +102,11 @@ private:
 
     std::mutex peers_mutex_;
     std::map<std::string, PeerInfo> peers_;
+    std::set<std::string> online_peers_;
     std::vector<PeerInfo> people_rows_;
     int selected_peer_index_{0};
+
+    std::unique_ptr<DatabaseManager> db_manager_;
 
     std::string input_buffer_;
 
