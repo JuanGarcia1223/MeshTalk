@@ -116,6 +116,10 @@ int main(int argc, char** argv) {
         chat_server.stop();
         return 1;
     }
+    if (!ui.initDatabase()) {
+        chat_server.stop();
+        return 1;
+    }
 
     UdpHelloBroadcaster broadcaster(
             name, kDiscoveryUdpPort, chat_port, "127.0.0.1",
