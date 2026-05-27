@@ -255,6 +255,42 @@ void ChatServer::register_peer(const std::string& peer_name, const std::string& 
     name_by_ip_[ip] = peer_name;
 }
 
+void ChatServer::disconnect_peer(const std::string& peer_name) {
+    if (peer_name.empty()) {
+        return;
+    }
+
+    // Find IP for peer name
+    std::string peer_ip;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& kv : name_by_ip_) {
+            if (kv.second == peer_name) {
+                peer_ip = kv.first;
+                break;
+            }
+        }
+    }
+
+    if (peer_ip.empty()) {
+        return;
+    }
+
+    // Close connections to this IP
+    std::lock_guard<std::mutex> lock(outbound_mutex_);
+    for (auto it = outbound_fd_by_endpoint_.begin(); it != outbound_fd_by_endpoint_.end(); ) {
+        if (it->first.find(peer_ip) == 0) {
+            std::cout << "chat: closing connection to " << peer_name << " (" << it->first << ")\n";
+            if (it->second >= 0) {
+                close(it->second);
+            }
+            it = outbound_fd_by_endpoint_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void ChatServer::set_receive_handler(
     std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)>
         handler) {

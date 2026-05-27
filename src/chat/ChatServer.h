@@ -22,6 +22,7 @@ public:
     bool send_chat(const std::string& from_user, const std::string& to_user,
                    const std::string& ip, uint16_t port, const std::string& content);
     void register_peer(const std::string& peer_name, const std::string& ip);
+    void disconnect_peer(const std::string& peer_name);
     void set_receive_handler(std::function<void(const std::string&, const std::string&, const std::string&,
                                                 const std::string&, int64_t)> handler);
 

@@ -72,11 +72,13 @@ std::string normalize_datetime_display(const std::string& input) {
 
 TerminalUI::TerminalUI(bool debug_mode, std::string self_name,
                        std::function<void(const PeerInfo&)> on_peer_activate,
-                       std::function<bool(const PeerInfo&, const std::string&)> on_send_chat)
+                       std::function<bool(const PeerInfo&, const std::string&)> on_send_chat,
+                       std::function<void(const std::string&)> on_peer_offline)
     : debug_mode_(debug_mode),
       self_name_(std::move(self_name)),
       on_peer_activate_(std::move(on_peer_activate)),
-      on_send_chat_(std::move(on_send_chat)) {}
+      on_send_chat_(std::move(on_send_chat)),
+      on_peer_offline_(std::move(on_peer_offline)) {}
 
 TerminalUI::~TerminalUI() { stop(); }
 
@@ -144,12 +146,47 @@ bool TerminalUI::init() {
     return true;
 }
 
+void TerminalUI::run_timeout_checker() {
+    using namespace std::chrono;
+    constexpr auto kTimeout = std::chrono::seconds(10);
+
+    while (running_) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        std::vector<std::string> peers_to_offline;
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            const auto now = steady_clock::now();
+            for (auto it = last_seen_.begin(); it != last_seen_.end(); ) {
+                if (now - it->second > kTimeout) {
+                    const std::string& name = it->first;
+                    if (online_peers_.count(name) > 0) {
+                        peers_to_offline.push_back(name);
+                        online_peers_.erase(name);
+                    }
+                    it = last_seen_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        for (const auto& name : peers_to_offline) {
+            add_debug("peer timeout: " + name + " marked offline");
+            if (on_peer_offline_) {
+                on_peer_offline_(name);
+            }
+        }
+    }
+}
+
 void TerminalUI::run() {
     if (!nc_ || running_) {
         return;
     }
 
     running_ = true;
+    timeout_checker_thread_ = std::thread(&TerminalUI::run_timeout_checker, this);
     add_debug("press Ctrl+C to quit");
     render();
 
@@ -223,6 +260,11 @@ void TerminalUI::run() {
 
 void TerminalUI::stop() {
     running_ = false;
+
+    if (timeout_checker_thread_.joinable()) {
+        timeout_checker_thread_.join();
+    }
+
     destroy_layout();
     stop_stdio_capture();
 
@@ -243,6 +285,7 @@ void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uin
     std::lock_guard<std::mutex> lock(peers_mutex_);
     peers_[name] = PeerInfo{name, ip, tcp_port};
     online_peers_.insert(name);
+    last_seen_[name] = std::chrono::steady_clock::now();
 }
 
 void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,

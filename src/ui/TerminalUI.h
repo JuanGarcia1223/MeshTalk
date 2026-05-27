@@ -3,6 +3,7 @@
 #include <notcurses/notcurses.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -32,7 +33,8 @@ public:
 
     TerminalUI(bool debug_mode, std::string self_name,
                std::function<void(const PeerInfo&)> on_peer_activate = {},
-               std::function<bool(const PeerInfo&, const std::string&)> on_send_chat = {});
+               std::function<bool(const PeerInfo&, const std::string&)> on_send_chat = {},
+               std::function<void(const std::string&)> on_peer_offline = {});
     ~TerminalUI();
 
     bool initDatabase();
@@ -103,11 +105,16 @@ private:
 
     std::mutex peers_mutex_;
     std::map<std::string, PeerInfo> peers_;
+    std::map<std::string, std::chrono::steady_clock::time_point> last_seen_;
     std::set<std::string> online_peers_;
     std::vector<PeerInfo> people_rows_;
     int selected_peer_index_{0};
 
     std::unique_ptr<DatabaseManager> db_manager_;
+    std::function<void(const std::string&)> on_peer_offline_;
+
+    std::thread timeout_checker_thread_;
+    void run_timeout_checker();
 
     std::string input_buffer_;
 
