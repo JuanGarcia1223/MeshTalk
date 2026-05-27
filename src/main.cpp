@@ -112,6 +112,9 @@ int main(int argc, char** argv) {
             },
             [&chat_server, &name](const TerminalUI::PeerInfo& peer, const std::string& text) {
                 return chat_server.send_chat(name, peer.username, peer.ip, peer.tcp_port, text);
+            },
+            [&chat_server](const std::string& peer_name) {
+                chat_server.disconnect_peer(peer_name);
             });
     if (!ui.init()) {
         chat_server.stop();
