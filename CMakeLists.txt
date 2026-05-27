@@ -43,7 +43,7 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
 
 add_executable(meshtalk_demo
   src/main.cpp
-  src/db/SqliteTest.cpp
+  src/db/DatabaseManager.cpp
   src/chat/ChatServer.cpp
   src/discovery/UdpHelloBroadcaster.cpp
   src/ui/TerminalUI.cpp
