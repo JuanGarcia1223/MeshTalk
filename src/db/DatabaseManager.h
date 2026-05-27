@@ -13,6 +13,7 @@ struct ChatMessageRecord {
     bool is_sender;
     std::string content;
     std::string timestamp;
+    int64_t timestamp_ms;
 };
 
 class DatabaseManager {
@@ -26,7 +27,8 @@ public:
     bool init();
 
     bool saveMessage(const std::string& peer_name, bool is_sender,
-                     const std::string& content, const std::string& timestamp);
+                     const std::string& content, const std::string& timestamp,
+                     int64_t timestamp_ms);
 
     std::vector<ChatMessageRecord> loadAllMessages();
     std::vector<ChatMessageRecord> loadMessagesForPeer(const std::string& peer_name);

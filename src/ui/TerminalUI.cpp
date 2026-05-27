@@ -46,6 +46,11 @@ std::string local_datetime_now() {
     return oss.str();
 }
 
+int64_t unix_epoch_ms_now() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
 std::string normalize_datetime_display(const std::string& input) {
     if (input.empty()) {
         return local_datetime_now();
@@ -190,10 +195,10 @@ void TerminalUI::run() {
                 const PeerInfo peer = people_rows_[selected_peer_index_];
 
                 if (peer.username == "self") {
-                    add_chat_message("self", true, text, local_datetime_now());
+                    add_chat_message("self", true, text, local_datetime_now(), unix_epoch_ms_now());
                 } else if (on_send_chat_) {
                     if (on_send_chat_(peer, text)) {
-                        add_chat_message(peer.username, true, text, local_datetime_now());
+                        add_chat_message(peer.username, true, text, local_datetime_now(), unix_epoch_ms_now());
                     }
                 }
                 input_buffer_.clear();
@@ -241,14 +246,15 @@ void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uin
 }
 
 void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
-                                  const std::string& content, const std::string& datetime) {
+                                  const std::string& content, const std::string& datetime,
+                                  int64_t timestamp_ms) {
     if (peer_name.empty() || content.empty()) {
         return;
     }
 
-    // Save to database
+    // Save to database with timestamp_ms for proper ordering
     if (db_manager_) {
-        db_manager_->saveMessage(peer_name, sender, content, datetime);
+        db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms);
     }
 
     std::lock_guard<std::mutex> lock(chat_mutex_);

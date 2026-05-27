@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cctype>
 #include <csignal>
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <iomanip>
@@ -133,12 +134,13 @@ int main(int argc, char** argv) {
             },
             udp_debug);
     chat_server.set_receive_handler([&ui, &name](const std::string& from_user, const std::string& to_user,
-                                                  const std::string& content, const std::string& datetime) {
+                                                  const std::string& content, const std::string& datetime,
+                                                  int64_t timestamp_ms) {
         if (to_user != name) {
             return;
         }
         const std::string display_time = datetime.empty() ? local_datetime_now() : datetime;
-        ui.add_chat_message(from_user, false, content, display_time);
+        ui.add_chat_message(from_user, false, content, display_time, timestamp_ms);
     });
     if (!broadcaster.start()) {
         chat_server.stop();

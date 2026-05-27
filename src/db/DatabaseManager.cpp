@@ -60,6 +60,7 @@ bool DatabaseManager::createSchema() {
                 is_sender INTEGER NOT NULL,
                 content TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
+                timestamp_ms INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         )");
@@ -69,8 +70,18 @@ bool DatabaseManager::createSchema() {
         )");
 
         db_->exec(R"(
-            CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_messages_timestamp_ms ON messages(timestamp_ms);
         )");
+
+        // Schema migration: add timestamp_ms column if it doesn't exist (for old databases)
+        try {
+            SQLite::Statement check(*db_, "SELECT timestamp_ms FROM messages LIMIT 1");
+            check.executeStep();
+        } catch (...) {
+            // Column doesn't exist, add it
+            db_->exec("ALTER TABLE messages ADD COLUMN timestamp_ms INTEGER DEFAULT 0");
+            std::cout << "db: migrated schema - added timestamp_ms column\n";
+        }
 
         return true;
     } catch (const std::exception& ex) {
@@ -80,7 +91,8 @@ bool DatabaseManager::createSchema() {
 }
 
 bool DatabaseManager::saveMessage(const std::string& peer_name, bool is_sender,
-                                  const std::string& content, const std::string& timestamp) {
+                                  const std::string& content, const std::string& timestamp,
+                                  int64_t timestamp_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (!db_) {
@@ -89,12 +101,13 @@ bool DatabaseManager::saveMessage(const std::string& peer_name, bool is_sender,
 
     try {
         SQLite::Statement insert(*db_,
-                                 "INSERT INTO messages (peer_name, is_sender, content, timestamp) "
-                                 "VALUES (?, ?, ?, ?)");
+                                 "INSERT INTO messages (peer_name, is_sender, content, timestamp, timestamp_ms) "
+                                 "VALUES (?, ?, ?, ?, ?)");
         insert.bind(1, peer_name);
         insert.bind(2, is_sender ? 1 : 0);
         insert.bind(3, content);
         insert.bind(4, timestamp);
+        insert.bind(5, timestamp_ms);
         insert.exec();
         return true;
     } catch (const std::exception& ex) {
@@ -114,8 +127,8 @@ std::vector<ChatMessageRecord> DatabaseManager::loadAllMessages() {
 
     try {
         SQLite::Statement query(*db_,
-                                "SELECT id, peer_name, is_sender, content, timestamp "
-                                "FROM messages ORDER BY timestamp ASC");
+                                "SELECT id, peer_name, is_sender, content, timestamp, timestamp_ms "
+                                "FROM messages ORDER BY timestamp_ms ASC");
 
         while (query.executeStep()) {
             ChatMessageRecord record;
@@ -124,6 +137,7 @@ std::vector<ChatMessageRecord> DatabaseManager::loadAllMessages() {
             record.is_sender = query.getColumn(2).getInt() != 0;
             record.content = query.getColumn(3).getString();
             record.timestamp = query.getColumn(4).getString();
+            record.timestamp_ms = query.getColumn(5).getInt64();
             records.push_back(record);
         }
     } catch (const std::exception& ex) {
@@ -144,8 +158,8 @@ std::vector<ChatMessageRecord> DatabaseManager::loadMessagesForPeer(const std::s
 
     try {
         SQLite::Statement query(*db_,
-                                "SELECT id, peer_name, is_sender, content, timestamp "
-                                "FROM messages WHERE peer_name = ? ORDER BY timestamp ASC");
+                                "SELECT id, peer_name, is_sender, content, timestamp, timestamp_ms "
+                                "FROM messages WHERE peer_name = ? ORDER BY timestamp_ms ASC");
         query.bind(1, peer_name);
 
         while (query.executeStep()) {
@@ -155,6 +169,7 @@ std::vector<ChatMessageRecord> DatabaseManager::loadMessagesForPeer(const std::s
             record.is_sender = query.getColumn(2).getInt() != 0;
             record.content = query.getColumn(3).getString();
             record.timestamp = query.getColumn(4).getString();
+            record.timestamp_ms = query.getColumn(5).getInt64();
             records.push_back(record);
         }
     } catch (const std::exception& ex) {
