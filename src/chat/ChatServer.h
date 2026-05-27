@@ -23,7 +23,7 @@ public:
                    const std::string& ip, uint16_t port, const std::string& content);
     void register_peer(const std::string& peer_name, const std::string& ip);
     void set_receive_handler(std::function<void(const std::string&, const std::string&, const std::string&,
-                                                const std::string&)> handler);
+                                                const std::string&, int64_t)> handler);
 
     uint16_t port() const { return port_; }
 
@@ -42,6 +42,6 @@ private:
     std::unordered_map<std::string, int> outbound_fd_by_endpoint_;
     std::atomic<uint64_t> msg_counter_{0};
     std::mutex receive_handler_mutex_;
-    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&)>
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)>
         on_receive_;
 };

@@ -46,7 +46,8 @@ public:
 
     void upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port);
     void add_chat_message(const std::string& peer_name, bool sender,
-                          const std::string& content, const std::string& datetime);
+                          const std::string& content, const std::string& datetime,
+                          int64_t timestamp_ms = 0);
 
 private:
     void render();
