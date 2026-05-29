@@ -2,8 +2,10 @@
 
 #include <SQLiteCpp/SQLiteCpp.h>
 
+#include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +16,13 @@ struct ChatMessageRecord {
     std::string content;
     std::string timestamp;
     int64_t timestamp_ms;
+};
+
+struct PeerIdentity {
+    std::string username;
+    std::vector<uint8_t> public_key;
+    std::string trust_status;  // "trusted" or "pending"
+    int64_t first_seen;
 };
 
 class DatabaseManager {
@@ -34,6 +43,17 @@ public:
     std::vector<ChatMessageRecord> loadMessagesForPeer(const std::string& peer_name);
 
     std::vector<std::string> getAllPeers();
+
+    // Identity methods
+    bool saveIdentity(const std::vector<uint8_t>& public_key, const std::vector<uint8_t>& private_key);
+    bool loadIdentity(std::vector<uint8_t>& public_key, std::vector<uint8_t>& private_key);
+
+    // Known peers (trust store) methods
+    std::optional<PeerIdentity> lookupPeer(const std::string& username);
+    enum class UpsertResult { Inserted, Updated, Mismatch };
+    UpsertResult upsertPeer(const std::string& username, const std::vector<uint8_t>& public_key);
+    bool trustPeer(const std::string& username);
+    std::vector<PeerIdentity> getAllKnownPeers();
 
 private:
     std::string getDbPath() const;
