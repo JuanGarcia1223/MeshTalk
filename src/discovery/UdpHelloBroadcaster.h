@@ -1,5 +1,7 @@
 #pragma once
 
+#include "discovery.pb.h"
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -12,6 +14,7 @@ public:
                             std::string payload_ip = "127.0.0.1",
                             std::function<void(const std::string&, const std::string&, uint16_t)>
                                     on_peer_seen = {},
+                            std::function<void(const std::string&)> on_peer_bye = {},
                             bool debug_logs = false);
     ~UdpHelloBroadcaster();
 
@@ -20,17 +23,20 @@ public:
 
     bool start();
     void stop();
+    void send_bye();
 
 private:
     void run_broadcast_loop();
     void run_receive_loop();
     bool send_hello();
+    bool send_packet(DiscoveryPacket::Type type);
 
     std::string username_;
     uint16_t udp_port_;
     uint16_t tcp_port_;
     std::string payload_ip_;
     std::function<void(const std::string&, const std::string&, uint16_t)> on_peer_seen_;
+    std::function<void(const std::string&)> on_peer_bye_;
     bool debug_logs_{false};
 
     int send_sockfd_{-1};

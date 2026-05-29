@@ -293,6 +293,16 @@ void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uin
     last_seen_[name] = std::chrono::steady_clock::now();
 }
 
+void TerminalUI::mark_peer_offline(const std::string& name) {
+    if (name.empty() || name == self_name_) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    online_peers_.erase(name);
+    last_seen_.erase(name);
+    add_debug("peer BYE received: " + name + " marked offline");
+}
+
 void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
                                   const std::string& content, const std::string& datetime,
                                   int64_t timestamp_ms) {

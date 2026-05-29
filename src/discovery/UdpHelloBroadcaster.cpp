@@ -23,12 +23,14 @@ UdpHelloBroadcaster::UdpHelloBroadcaster(std::string username, uint16_t udp_port
                                      uint16_t tcp_port, std::string payload_ip,
                                      std::function<void(const std::string&, const std::string&, uint16_t)>
                                              on_peer_seen,
+                                     std::function<void(const std::string&)> on_peer_bye,
                                      bool debug_logs)
         : username_(std::move(username)),
             udp_port_(udp_port),
             tcp_port_(tcp_port),
             payload_ip_(std::move(payload_ip)),
             on_peer_seen_(std::move(on_peer_seen)),
+            on_peer_bye_(std::move(on_peer_bye)),
             debug_logs_(debug_logs) {}
 
 UdpHelloBroadcaster::~UdpHelloBroadcaster() { stop(); }
@@ -150,15 +152,21 @@ void UdpHelloBroadcaster::run_receive_loop() {
                             << " from=" << (src_ip ? src_ip : "unknown")
                             << ":" << ntohs(from.sin_port) << "\n";
         }
-        if (on_peer_seen_ && !pkt.username().empty() && !pkt.ip().empty()) {
+
+        if (pkt.type() == DiscoveryPacket::BYE) {
+            // Peer is going offline immediately
+            if (on_peer_bye_ && !pkt.username().empty()) {
+                on_peer_bye_(pkt.username());
+            }
+        } else if (on_peer_seen_ && !pkt.username().empty() && !pkt.ip().empty()) {
             on_peer_seen_(pkt.username(), pkt.ip(), static_cast<uint16_t>(pkt.tcp_port()));
         }
     }
 }
 
-bool UdpHelloBroadcaster::send_hello() {
+bool UdpHelloBroadcaster::send_packet(DiscoveryPacket::Type type) {
     DiscoveryPacket pkt;
-    pkt.set_type(DiscoveryPacket::HELLO);
+    pkt.set_type(type);
     pkt.set_username(username_);
     pkt.set_ip(payload_ip_);
     pkt.set_tcp_port(tcp_port_);
@@ -181,8 +189,28 @@ bool UdpHelloBroadcaster::send_hello() {
     }
 
     if (debug_logs_) {
-        std::cout << "broadcast HELLO username=" << username_ << " ip=" << payload_ip_
+        const char* type_str = (type == DiscoveryPacket::HELLO) ? "HELLO" :
+                               (type == DiscoveryPacket::BYE) ? "BYE" : "HEARTBEAT";
+        std::cout << "broadcast " << type_str << " username=" << username_ << " ip=" << payload_ip_
                         << " tcp_port=" << tcp_port_ << " udp_port=" << udp_port_ << "\n";
     }
     return true;
+}
+
+bool UdpHelloBroadcaster::send_hello() {
+    return send_packet(DiscoveryPacket::HELLO);
+}
+
+void UdpHelloBroadcaster::send_bye() {
+    if (send_sockfd_ < 0) {
+        return;
+    }
+    // Send BYE multiple times to ensure delivery
+    for (int i = 0; i < 3; ++i) {
+        send_packet(DiscoveryPacket::BYE);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (debug_logs_) {
+        std::cout << "sent BYE broadcast (3x) for clean shutdown\n";
+    }
 }
