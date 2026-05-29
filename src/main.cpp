@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
 
     if (no_ui_mode) {
         UdpHelloBroadcaster broadcaster(
-            name, kDiscoveryUdpPort, chat_port, "127.0.0.1", {}, {}, udp_debug);
+            name, kDiscoveryUdpPort, chat_port, "", {}, {}, udp_debug);
         if (!broadcaster.start()) {
             chat_server.stop();
             return 1;
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
     }
 
     UdpHelloBroadcaster broadcaster(
-            name, kDiscoveryUdpPort, chat_port, "127.0.0.1",
+            name, kDiscoveryUdpPort, chat_port, "",
             [&ui, &chat_server, &name, chat_port](const std::string& peer_name, const std::string& peer_ip,
                                 uint16_t peer_port) {
                 if (peer_name == name && peer_port == chat_port) {

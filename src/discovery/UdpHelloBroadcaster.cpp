@@ -3,6 +3,8 @@
 #include "discovery.pb.h"
 
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -17,6 +19,38 @@ int64_t unix_epoch_ms() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
+
+std::string get_local_ip() {
+    struct ifaddrs *ifaddr, *ifa;
+    char addr_str[INET_ADDRSTRLEN];
+    std::string found_ip;
+
+    if (getifaddrs(&ifaddr) == -1) {
+        return "127.0.0.1";
+    }
+
+    for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;  // Only IPv4
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;  // Skip loopback
+        if (!(ifa->ifa_flags & IFF_UP)) continue;  // Skip down interfaces
+
+        void *addr_ptr = &reinterpret_cast<sockaddr_in*>(ifa->ifa_addr)->sin_addr;
+        if (inet_ntop(AF_INET, addr_ptr, addr_str, sizeof(addr_str))) {
+            found_ip = addr_str;
+            // Prefer interfaces that look like main network (eth, en, wlan)
+            std::string name = ifa->ifa_name;
+            if (name.find("eth") == 0 || name.find("en") == 0 || 
+                name.find("wlan") == 0 || name.find("wlp") == 0) {
+                freeifaddrs(ifaddr);
+                return found_ip;
+            }
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    return found_ip.empty() ? "127.0.0.1" : found_ip;
+}
 }    // namespace
 
 UdpHelloBroadcaster::UdpHelloBroadcaster(std::string username, uint16_t udp_port,
@@ -28,10 +62,19 @@ UdpHelloBroadcaster::UdpHelloBroadcaster(std::string username, uint16_t udp_port
         : username_(std::move(username)),
             udp_port_(udp_port),
             tcp_port_(tcp_port),
-            payload_ip_(std::move(payload_ip)),
             on_peer_seen_(std::move(on_peer_seen)),
             on_peer_bye_(std::move(on_peer_bye)),
-            debug_logs_(debug_logs) {}
+            debug_logs_(debug_logs) {
+    // Auto-detect LAN IP if not provided or localhost
+    if (payload_ip.empty() || payload_ip == "127.0.0.1" || payload_ip == "localhost") {
+        payload_ip_ = get_local_ip();
+        if (debug_logs_) {
+            std::cout << "udp: auto-detected IP: " << payload_ip_ << "\n";
+        }
+    } else {
+        payload_ip_ = std::move(payload_ip);
+    }
+}
 
 UdpHelloBroadcaster::~UdpHelloBroadcaster() { stop(); }
 
