@@ -228,14 +228,19 @@ void TerminalUI::run() {
         } else if (key_action && (input == NCKEY_ENTER || input == '\n' || input == '\r')) {
             if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
                 selected_peer_index_ < static_cast<int>(people_rows_.size())) {
-                const std::string text = input_buffer_;
-                const PeerInfo peer = people_rows_[selected_peer_index_];
+                // Don't allow sending if peer is offline
+                if (!is_selected_peer_online()) {
+                    add_debug("cannot send: peer is offline");
+                } else {
+                    const std::string text = input_buffer_;
+                    const PeerInfo peer = people_rows_[selected_peer_index_];
 
-                if (peer.username == "self") {
-                    add_chat_message("self", true, text, local_datetime_now(), unix_epoch_ms_now());
-                } else if (on_send_chat_) {
-                    if (on_send_chat_(peer, text)) {
-                        add_chat_message(peer.username, true, text, local_datetime_now(), unix_epoch_ms_now());
+                    if (peer.username == "self") {
+                        add_chat_message("self", true, text, local_datetime_now(), unix_epoch_ms_now());
+                    } else if (on_send_chat_) {
+                        if (on_send_chat_(peer, text)) {
+                            add_chat_message(peer.username, true, text, local_datetime_now(), unix_epoch_ms_now());
+                        }
                     }
                 }
                 input_buffer_.clear();
@@ -598,6 +603,18 @@ bool TerminalUI::activate_selected_peer() {
     return false;
 }
 
+bool TerminalUI::is_selected_peer_online() {
+    if (selected_peer_index_ < 0 || selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
+        return true;  // Default to true if no selection
+    }
+    const std::string& name = people_rows_[selected_peer_index_].username;
+    if (name == "self") {
+        return true;  // Self is always "online"
+    }
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    return online_peers_.count(name) > 0;
+}
+
 void TerminalUI::draw_chat() {
     const uint64_t border_ch = make_channels(0x93, 0xc5, 0xfd, 0x0f, 0x17, 0x2a);
     const uint64_t base_text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
@@ -605,11 +622,14 @@ void TerminalUI::draw_chat() {
     const uint64_t receiver_ch = make_channels(0x93, 0xc5, 0xfd, 0x0f, 0x17, 0x2a);
     const uint64_t dt_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
     const uint64_t input_border_ch = make_channels(0xc4, 0xb5, 0xfd, 0x0f, 0x17, 0x2a);
+    const uint64_t offline_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
 
     std::string active_name = "self";
     if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
         active_name = people_rows_[selected_peer_index_].username;
     }
+
+    const bool peer_online = is_selected_peer_online();
 
     draw_panel(chat_plane_, " Chat: " + active_name + " ", border_ch, base_text_ch, 0x0f172a,
                0x111c33, 0x0f172a, 0x111c33);
@@ -623,6 +643,18 @@ void TerminalUI::draw_chat() {
     ncplane_dim_yx(chat_plane_, &rows, &cols);
     if (rows < 8 || cols < 16) {
         return;
+    }
+
+    // If peer is offline, show offline message instead of input box
+    if (!peer_online) {
+        const std::string offline_msg = " Offline - cannot send messages ";
+        const int msg_len = static_cast<int>(offline_msg.size());
+        const int center_x = (static_cast<int>(cols) - msg_len) / 2;
+        const int bottom_y = static_cast<int>(rows) - 2;
+        ncplane_set_channels(chat_plane_, offline_ch);
+        ncplane_putstr_yx(chat_plane_, bottom_y, std::max(1, center_x), offline_msg.c_str());
+        ncplane_set_channels(chat_plane_, base_text_ch);
+        // Don't draw input box, return early after drawing messages
     }
 
     const int input_w = static_cast<int>(cols) - 2;
@@ -732,24 +764,27 @@ void TerminalUI::draw_chat() {
         }
     }
 
-    ncplane_cursor_move_yx(chat_plane_, input_y, 1);
-    ncplane_rounded_box_sized(chat_plane_, 0, input_border_ch, input_h, input_w, 0);
-    ncplane_set_channels(chat_plane_, base_text_ch);
-    ncplane_putstr_yx(chat_plane_, input_y, 3, " Input ");
+    // Only draw input box if peer is online
+    if (peer_online) {
+        ncplane_cursor_move_yx(chat_plane_, input_y, 1);
+        ncplane_rounded_box_sized(chat_plane_, 0, input_border_ch, input_h, input_w, 0);
+        ncplane_set_channels(chat_plane_, base_text_ch);
+        ncplane_putstr_yx(chat_plane_, input_y, 3, " Input ");
 
-    const std::vector<std::string> wrapped_input = wrap_text(input_text, input_inner_w);
-    const int input_visible = input_h - 2;
-    int input_start = static_cast<int>(wrapped_input.size()) - input_visible;
-    if (input_start < 0) {
-        input_start = 0;
-    }
-
-    for (int i = 0; i < input_visible; ++i) {
-        const int idx = input_start + i;
-        if (idx >= static_cast<int>(wrapped_input.size())) {
-            break;
+        const std::vector<std::string> wrapped_input = wrap_text(input_text, input_inner_w);
+        const int input_visible = input_h - 2;
+        int input_start = static_cast<int>(wrapped_input.size()) - input_visible;
+        if (input_start < 0) {
+            input_start = 0;
         }
-        ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped_input[idx].c_str());
+
+        for (int i = 0; i < input_visible; ++i) {
+            const int idx = input_start + i;
+            if (idx >= static_cast<int>(wrapped_input.size())) {
+                break;
+            }
+            ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped_input[idx].c_str());
+        }
     }
 }
 

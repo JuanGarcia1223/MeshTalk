@@ -67,6 +67,7 @@ private:
 
     bool handle_people_click(int abs_y, int abs_x);
     bool activate_selected_peer();
+    bool is_selected_peer_online();
     void add_debug(const std::string& line);
 
     bool start_stdio_capture();
