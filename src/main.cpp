@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
 
     if (no_ui_mode) {
         UdpHelloBroadcaster broadcaster(
-            name, kDiscoveryUdpPort, chat_port, "127.0.0.1", {}, udp_debug);
+            name, kDiscoveryUdpPort, chat_port, "127.0.0.1", {}, {}, udp_debug);
         if (!broadcaster.start()) {
             chat_server.stop();
             return 1;
@@ -96,6 +96,7 @@ int main(int argc, char** argv) {
         while (g_keep_running) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
+        broadcaster.send_bye();
         broadcaster.stop();
         chat_server.stop();
         return 0;
@@ -135,6 +136,11 @@ int main(int argc, char** argv) {
                 ui.upsert_peer(peer_name, peer_ip, peer_port);
                 chat_server.register_peer(peer_name, peer_ip);
             },
+            [&ui, &chat_server](const std::string& peer_name) {
+                // Received BYE from peer - mark offline immediately
+                ui.mark_peer_offline(peer_name);
+                chat_server.disconnect_peer(peer_name);
+            },
             udp_debug);
     chat_server.set_receive_handler([&ui, &name](const std::string& from_user, const std::string& to_user,
                                                   const std::string& content, const std::string& datetime,
@@ -150,6 +156,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     ui.run();
+    broadcaster.send_bye();
     broadcaster.stop();
     chat_server.stop();
     return 0;
