@@ -3,7 +3,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cstring>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 
 DatabaseManager::DatabaseManager(const std::string& username) : username_(username) {}
@@ -82,6 +84,32 @@ bool DatabaseManager::createSchema() {
             db_->exec("ALTER TABLE messages ADD COLUMN timestamp_ms INTEGER DEFAULT 0");
             std::cout << "db: migrated schema - added timestamp_ms column\n";
         }
+
+        // Identity table - stores this user's Ed25519 keypair
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS identity (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                public_key BLOB NOT NULL,
+                private_key BLOB NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        )");
+
+        // Known peers table - trust store for other users
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS known_peers (
+                username TEXT PRIMARY KEY,
+                public_key BLOB NOT NULL,
+                trust_status TEXT NOT NULL CHECK (trust_status IN ('trusted', 'pending')),
+                first_seen INTEGER NOT NULL,
+                last_seen INTEGER NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        )");
+
+        db_->exec(R"(
+            CREATE INDEX IF NOT EXISTS idx_known_peers_status ON known_peers(trust_status);
+        )");
 
         return true;
     } catch (const std::exception& ex) {
@@ -197,6 +225,195 @@ std::vector<std::string> DatabaseManager::getAllPeers() {
         }
     } catch (const std::exception& ex) {
         std::cerr << "db: failed to get peers: " << ex.what() << "\n";
+    }
+
+    return peers;
+}
+
+bool DatabaseManager::saveIdentity(const std::vector<uint8_t>& public_key,
+                                   const std::vector<uint8_t>& private_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT OR REPLACE INTO identity (id, public_key, private_key) VALUES (1, ?, ?)");
+        insert.bind(1, public_key.data(), static_cast<int>(public_key.size()));
+        insert.bind(2, private_key.data(), static_cast<int>(private_key.size()));
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to save identity: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::loadIdentity(std::vector<uint8_t>& public_key,
+                                   std::vector<uint8_t>& private_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement query(*db_, "SELECT public_key, private_key FROM identity WHERE id = 1");
+        if (query.executeStep()) {
+            const void* pub_data = query.getColumn(0).getBlob();
+            int pub_size = query.getColumn(0).getBytes();
+            const void* priv_data = query.getColumn(1).getBlob();
+            int priv_size = query.getColumn(1).getBytes();
+
+            public_key.resize(pub_size);
+            private_key.resize(priv_size);
+            std::memcpy(public_key.data(), pub_data, pub_size);
+            std::memcpy(private_key.data(), priv_data, priv_size);
+            return true;
+        }
+        return false;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to load identity: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+std::optional<PeerIdentity> DatabaseManager::lookupPeer(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return std::nullopt;
+    }
+
+    try {
+        SQLite::Statement query(*db_,
+            "SELECT username, public_key, trust_status, first_seen FROM known_peers WHERE username = ?");
+        query.bind(1, username);
+
+        if (query.executeStep()) {
+            PeerIdentity peer;
+            peer.username = query.getColumn(0).getString();
+
+            const void* key_data = query.getColumn(1).getBlob();
+            int key_size = query.getColumn(1).getBytes();
+            peer.public_key.resize(key_size);
+            std::memcpy(peer.public_key.data(), key_data, key_size);
+
+            peer.trust_status = query.getColumn(2).getString();
+            peer.first_seen = query.getColumn(3).getInt64();
+            return peer;
+        }
+        return std::nullopt;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to lookup peer: " << ex.what() << "\n";
+        return std::nullopt;
+    }
+}
+
+DatabaseManager::UpsertResult DatabaseManager::upsertPeer(const std::string& username,
+                                                          const std::vector<uint8_t>& public_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return UpsertResult::Mismatch;  // Error case
+    }
+
+    try {
+        // Check if peer exists
+        SQLite::Statement check(*db_,
+            "SELECT public_key FROM known_peers WHERE username = ?");
+        check.bind(1, username);
+
+        if (check.executeStep()) {
+            // Peer exists - check if key matches
+            const void* stored_key_data = check.getColumn(0).getBlob();
+            int stored_key_size = check.getColumn(0).getBytes();
+
+            if (static_cast<size_t>(stored_key_size) != public_key.size() ||
+                std::memcmp(stored_key_data, public_key.data(), public_key.size()) != 0) {
+                // Key mismatch!
+                std::cout << "db: key mismatch for peer " << username << "\n";
+                return UpsertResult::Mismatch;
+            }
+
+            // Key matches - update last_seen
+            SQLite::Statement update(*db_,
+                "UPDATE known_peers SET last_seen = ? WHERE username = ?");
+            update.bind(1, static_cast<int64_t>(std::time(nullptr)));
+            update.bind(2, username);
+            update.exec();
+            return UpsertResult::Updated;
+        }
+
+        // New peer - insert as pending
+        SQLite::Statement insert(*db_,
+            "INSERT INTO known_peers (username, public_key, trust_status, first_seen, last_seen) "
+            "VALUES (?, ?, 'pending', ?, ?)");
+        insert.bind(1, username);
+        insert.bind(2, public_key.data(), static_cast<int>(public_key.size()));
+        int64_t now = std::time(nullptr);
+        insert.bind(3, now);
+        insert.bind(4, now);
+        insert.exec();
+        std::cout << "db: new peer " << username << " added as pending\n";
+        return UpsertResult::Inserted;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to upsert peer: " << ex.what() << "\n";
+        return UpsertResult::Mismatch;  // Error case
+    }
+}
+
+bool DatabaseManager::trustPeer(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement update(*db_,
+            "UPDATE known_peers SET trust_status = 'trusted' WHERE username = ?");
+        update.bind(1, username);
+        update.exec();
+        std::cout << "db: peer " << username << " trusted\n";
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to trust peer: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+std::vector<PeerIdentity> DatabaseManager::getAllKnownPeers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<PeerIdentity> peers;
+
+    if (!db_) {
+        return peers;
+    }
+
+    try {
+        SQLite::Statement query(*db_,
+            "SELECT username, public_key, trust_status, first_seen FROM known_peers "
+            "ORDER BY trust_status DESC, username ASC");
+
+        while (query.executeStep()) {
+            PeerIdentity peer;
+            peer.username = query.getColumn(0).getString();
+
+            const void* key_data = query.getColumn(1).getBlob();
+            int key_size = query.getColumn(1).getBytes();
+            peer.public_key.resize(key_size);
+            std::memcpy(peer.public_key.data(), key_data, key_size);
+
+            peer.trust_status = query.getColumn(2).getString();
+            peer.first_seen = query.getColumn(3).getInt64();
+            peers.push_back(peer);
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to get known peers: " << ex.what() << "\n";
     }
 
     return peers;
