@@ -175,9 +175,11 @@ int main(int argc, char** argv) {
                 }
                 
                 // Trust decision logic
+                std::string fingerprint = KeyManager::fingerprint(identity_pk);
+                
                 if (identity_pk.empty()) {
                     // Legacy peer without identity - treat as untrusted
-                    ui.upsert_peer(peer_name, peer_ip, peer_port, false, true);
+                    ui.upsert_peer(peer_name, peer_ip, peer_port, false, true, fingerprint);
                     return;
                 }
                 
@@ -186,23 +188,23 @@ int main(int argc, char** argv) {
                     // New peer - insert as pending
                     auto result = db_manager.upsertPeer(peer_name, identity_pk);
                     if (result == DatabaseManager::UpsertResult::Inserted) {
-                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, false);
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, false, fingerprint);
                     }
                 } else {
                     // Existing peer - check key match
                     auto result = db_manager.upsertPeer(peer_name, identity_pk);
                     if (result == DatabaseManager::UpsertResult::Mismatch) {
                         // Key mismatch - show warning, don't allow messaging
-                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, true);
-                        ui.show_key_mismatch(peer_name, KeyManager::fingerprint(identity_pk), 
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, true, fingerprint);
+                        ui.show_key_mismatch(peer_name, fingerprint,
                                             KeyManager::fingerprint(existing->public_key));
                     } else if (existing->trust_status == "trusted") {
                         // Trusted peer
-                        ui.upsert_peer(peer_name, peer_ip, peer_port, true, false);
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, true, false, fingerprint);
                         chat_server.register_peer(peer_name, peer_ip);
                     } else {
                         // Pending peer
-                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, false);
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, false, fingerprint);
                     }
                 }
             },

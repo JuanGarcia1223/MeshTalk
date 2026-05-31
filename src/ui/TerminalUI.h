@@ -23,6 +23,7 @@ public:
         std::string username;
         std::string ip;
         uint16_t tcp_port{0};
+        std::string fingerprint;  // Public key fingerprint for trust decisions
     };
 
     struct ChatItem {
@@ -48,7 +49,8 @@ public:
     void stop();
 
     void upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port, 
-                     bool trusted = false, bool untrusted_legacy = false);
+                     bool trusted = false, bool untrusted_legacy = false,
+                     const std::string& fingerprint = "");
     void mark_peer_offline(const std::string& name);
     void show_key_mismatch(const std::string& name, const std::string& new_fingerprint, 
                            const std::string& stored_fingerprint);
@@ -83,7 +85,14 @@ private:
     bool is_selected_peer_online();
     bool is_selected_peer_trusted();
     
-    // Trust handling
+    // Trust modal dialog
+    void show_trust_modal(const std::string& peer_name, const std::string& fingerprint);
+    void close_trust_modal();
+    void draw_trust_modal();
+    bool handle_trust_modal_click(int abs_y, int abs_x);
+    bool handle_trust_modal_key(char32_t ch);
+    
+    // Old trust prompt (deprecated)
     void draw_trust_prompt();
     bool handle_trust_keypress(char32_t ch);
 
@@ -137,6 +146,13 @@ private:
     std::string trust_prompt_fingerprint_;
     bool trust_prompt_is_mismatch_{false};
     std::string trust_prompt_stored_fingerprint_;
+    
+    // Trust modal dialog state
+    bool showing_trust_modal_{false};
+    std::string trust_modal_peer_;
+    std::string trust_modal_fingerprint_;
+    int trust_modal_selected_button_{0};  // 0 = Accept, 1 = Reject
+    ncplane* trust_modal_plane_{nullptr};
 
     std::unique_ptr<DatabaseManager> db_manager_;
     std::function<void(const std::string&)> on_peer_offline_;
