@@ -7,12 +7,15 @@
 #include <functional>
 #include <string>
 #include <thread>
+#include <vector>
 
 class UdpHelloBroadcaster {
 public:
     UdpHelloBroadcaster(std::string username, uint16_t udp_port, uint16_t tcp_port,
                             std::string payload_ip = "127.0.0.1",
-                            std::function<void(const std::string&, const std::string&, uint16_t)>
+                            std::vector<uint8_t> identity_pk = {},
+                            std::function<void(const std::string&, const std::string&, uint16_t,
+                                               const std::vector<uint8_t>&)>
                                     on_peer_seen = {},
                             std::function<void(const std::string&)> on_peer_bye = {},
                             bool debug_logs = false);
@@ -35,7 +38,9 @@ private:
     uint16_t udp_port_;
     uint16_t tcp_port_;
     std::string payload_ip_;
-    std::function<void(const std::string&, const std::string&, uint16_t)> on_peer_seen_;
+    std::vector<uint8_t> identity_pk_;
+    std::function<void(const std::string&, const std::string&, uint16_t,
+                       const std::vector<uint8_t>&)> on_peer_seen_;
     std::function<void(const std::string&)> on_peer_bye_;
     bool debug_logs_{false};
 

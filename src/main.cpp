@@ -1,4 +1,5 @@
 #include "chat/ChatServer.h"
+#include "crypto/KeyManager.h"
 #include "discovery/UdpHelloBroadcaster.h"
 #include "ui/TerminalUI.h"
 
@@ -86,8 +87,22 @@ int main(int argc, char** argv) {
     const uint16_t chat_port = chat_server.port();
 
     if (no_ui_mode) {
+        // For noui mode, we need to initialize database and key manager
+        DatabaseManager db_manager(name);
+        if (!db_manager.init()) {
+            std::cerr << "failed to initialize database\n";
+            chat_server.stop();
+            return 1;
+        }
+        KeyManager key_manager(db_manager);
+        if (!key_manager.init()) {
+            std::cerr << "failed to initialize crypto identity\n";
+            chat_server.stop();
+            return 1;
+        }
+        
         UdpHelloBroadcaster broadcaster(
-            name, kDiscoveryUdpPort, chat_port, "", {}, {}, udp_debug);
+            name, kDiscoveryUdpPort, chat_port, "", key_manager.publicKey(), {}, {}, udp_debug);
         if (!broadcaster.start()) {
             chat_server.stop();
             return 1;
@@ -126,13 +141,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Initialize crypto identity
+    KeyManager key_manager(*ui.getDatabase());
+    if (!key_manager.init()) {
+        std::cerr << "failed to initialize crypto identity\n";
+        chat_server.stop();
+        return 1;
+    }
+
     UdpHelloBroadcaster broadcaster(
             name, kDiscoveryUdpPort, chat_port, "",
+            key_manager.publicKey(),
             [&ui, &chat_server, &name, chat_port](const std::string& peer_name, const std::string& peer_ip,
-                                uint16_t peer_port) {
+                                uint16_t peer_port, const std::vector<uint8_t>& identity_pk) {
                 if (peer_name == name && peer_port == chat_port) {
                     return;
                 }
+                // TODO: Handle trust decision logic here
                 ui.upsert_peer(peer_name, peer_ip, peer_port);
                 chat_server.register_peer(peer_name, peer_ip);
             },

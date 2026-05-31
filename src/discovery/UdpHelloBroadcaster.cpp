@@ -55,13 +55,16 @@ std::string get_local_ip() {
 
 UdpHelloBroadcaster::UdpHelloBroadcaster(std::string username, uint16_t udp_port,
                                      uint16_t tcp_port, std::string payload_ip,
-                                     std::function<void(const std::string&, const std::string&, uint16_t)>
+                                     std::vector<uint8_t> identity_pk,
+                                     std::function<void(const std::string&, const std::string&, uint16_t,
+                                                        const std::vector<uint8_t>&)>
                                              on_peer_seen,
                                      std::function<void(const std::string&)> on_peer_bye,
                                      bool debug_logs)
         : username_(std::move(username)),
             udp_port_(udp_port),
             tcp_port_(tcp_port),
+            identity_pk_(std::move(identity_pk)),
             on_peer_seen_(std::move(on_peer_seen)),
             on_peer_bye_(std::move(on_peer_bye)),
             debug_logs_(debug_logs) {
@@ -202,7 +205,12 @@ void UdpHelloBroadcaster::run_receive_loop() {
                 on_peer_bye_(pkt.username());
             }
         } else if (on_peer_seen_ && !pkt.username().empty() && !pkt.ip().empty()) {
-            on_peer_seen_(pkt.username(), pkt.ip(), static_cast<uint16_t>(pkt.tcp_port()));
+            // Extract identity public key if present
+            std::vector<uint8_t> peer_identity_pk;
+            if (!pkt.identity_pk().empty()) {
+                peer_identity_pk.assign(pkt.identity_pk().begin(), pkt.identity_pk().end());
+            }
+            on_peer_seen_(pkt.username(), pkt.ip(), static_cast<uint16_t>(pkt.tcp_port()), peer_identity_pk);
         }
     }
 }
@@ -214,6 +222,11 @@ bool UdpHelloBroadcaster::send_packet(DiscoveryPacket::Type type) {
     pkt.set_ip(payload_ip_);
     pkt.set_tcp_port(tcp_port_);
     pkt.set_timestamp(unix_epoch_ms());
+    
+    // Include identity public key if available
+    if (!identity_pk_.empty()) {
+        pkt.set_identity_pk(identity_pk_.data(), identity_pk_.size());
+    }
 
     std::string payload;
     if (!pkt.SerializeToString(&payload)) {
