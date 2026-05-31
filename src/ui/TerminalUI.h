@@ -38,6 +38,7 @@ public:
     ~TerminalUI();
 
     bool initDatabase();
+    DatabaseManager* getDatabase() { return db_manager_.get(); }
 
     TerminalUI(const TerminalUI&) = delete;
     TerminalUI& operator=(const TerminalUI&) = delete;
