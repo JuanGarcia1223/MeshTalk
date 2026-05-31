@@ -36,6 +36,10 @@ set(SQLITECPP_BUILD_TESTS OFF CACHE BOOL "Disable SQLiteCpp tests" FORCE)
 set(SQLITECPP_BUILD_EXAMPLES OFF CACHE BOOL "Disable SQLiteCpp examples" FORCE)
 FetchContent_MakeAvailable(SQLiteCpp)
 
+# libsodium is optional for now - using mock crypto implementation
+# find_library(LIBSODIUM_LIBRARY sodium)
+# find_path(LIBSODIUM_INCLUDE_DIR sodium.h)
+
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
   proto/discovery.proto
   proto/chat.proto
@@ -44,6 +48,7 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
 add_executable(meshtalk_demo
   src/main.cpp
   src/db/DatabaseManager.cpp
+  src/crypto/KeyManager.cpp
   src/chat/ChatServer.cpp
   src/discovery/UdpHelloBroadcaster.cpp
   src/ui/TerminalUI.cpp

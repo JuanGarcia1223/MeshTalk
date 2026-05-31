@@ -1,0 +1,41 @@
+#pragma once
+
+#include "db/DatabaseManager.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+class KeyManager {
+public:
+    static constexpr size_t PUBLIC_KEY_SIZE = 32;
+    static constexpr size_t PRIVATE_KEY_SIZE = 64;
+
+    explicit KeyManager(DatabaseManager& db);
+    ~KeyManager() = default;
+
+    KeyManager(const KeyManager&) = delete;
+    KeyManager& operator=(const KeyManager&) = delete;
+
+    // Initialize - generates or loads keypair
+    bool init();
+
+    // Getters
+    const std::vector<uint8_t>& publicKey() const { return public_key_; }
+    const std::vector<uint8_t>& privateKey() const { return private_key_; }
+
+    // Format public key as fingerprint (first 16 bytes as 4 groups of 4 hex chars)
+    static std::string fingerprint(const std::vector<uint8_t>& public_key);
+    std::string myFingerprint() const;
+
+    // Check if initialized
+    bool hasKeys() const { return !public_key_.empty() && !private_key_.empty(); }
+
+private:
+    bool generateKeypair();
+    bool loadOrCreateKeys();
+
+    DatabaseManager& db_;
+    std::vector<uint8_t> public_key_;
+    std::vector<uint8_t> private_key_;
+};
