@@ -141,25 +141,70 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Get database reference for trust store operations
+    DatabaseManager& db_manager = *ui.getDatabase();
+
     // Initialize crypto identity
-    KeyManager key_manager(*ui.getDatabase());
+    KeyManager key_manager(db_manager);
     if (!key_manager.init()) {
         std::cerr << "failed to initialize crypto identity\n";
         chat_server.stop();
         return 1;
     }
 
+    // Set up callbacks after all objects are initialized
+    ui.set_on_trust_callback([&db_manager, &ui](const std::string& peer_name) {
+        if (db_manager.trustPeer(peer_name)) {
+            ui.add_debug("trusted peer: " + peer_name);
+        }
+    });
+    
+    ui.set_on_show_identity([&key_manager, &ui]() {
+        ui.add_debug("=== Your Public Key Fingerprint ===");
+        ui.add_debug(key_manager.myFingerprint());
+        ui.add_debug("Share this fingerprint with others to verify your identity");
+    });
+
     UdpHelloBroadcaster broadcaster(
             name, kDiscoveryUdpPort, chat_port, "",
             key_manager.publicKey(),
-            [&ui, &chat_server, &name, chat_port](const std::string& peer_name, const std::string& peer_ip,
+            [&ui, &chat_server, &name, chat_port, &key_manager, &db_manager](const std::string& peer_name, const std::string& peer_ip,
                                 uint16_t peer_port, const std::vector<uint8_t>& identity_pk) {
                 if (peer_name == name && peer_port == chat_port) {
                     return;
                 }
-                // TODO: Handle trust decision logic here
-                ui.upsert_peer(peer_name, peer_ip, peer_port);
-                chat_server.register_peer(peer_name, peer_ip);
+                
+                // Trust decision logic
+                if (identity_pk.empty()) {
+                    // Legacy peer without identity - treat as untrusted
+                    ui.upsert_peer(peer_name, peer_ip, peer_port, false, true);
+                    return;
+                }
+                
+                auto existing = db_manager.lookupPeer(peer_name);
+                if (!existing) {
+                    // New peer - insert as pending
+                    auto result = db_manager.upsertPeer(peer_name, identity_pk);
+                    if (result == DatabaseManager::UpsertResult::Inserted) {
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, false);
+                    }
+                } else {
+                    // Existing peer - check key match
+                    auto result = db_manager.upsertPeer(peer_name, identity_pk);
+                    if (result == DatabaseManager::UpsertResult::Mismatch) {
+                        // Key mismatch - show warning, don't allow messaging
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, true);
+                        ui.show_key_mismatch(peer_name, KeyManager::fingerprint(identity_pk), 
+                                            KeyManager::fingerprint(existing->public_key));
+                    } else if (existing->trust_status == "trusted") {
+                        // Trusted peer
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, true, false);
+                        chat_server.register_peer(peer_name, peer_ip);
+                    } else {
+                        // Pending peer
+                        ui.upsert_peer(peer_name, peer_ip, peer_port, false, false);
+                    }
+                }
             },
             [&ui, &chat_server](const std::string& peer_name) {
                 // Received BYE from peer - mark offline immediately

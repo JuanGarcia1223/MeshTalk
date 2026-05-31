@@ -47,11 +47,22 @@ public:
     void run();
     void stop();
 
-    void upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port);
+    void upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port, 
+                     bool trusted = false, bool untrusted_legacy = false);
     void mark_peer_offline(const std::string& name);
+    void show_key_mismatch(const std::string& name, const std::string& new_fingerprint, 
+                           const std::string& stored_fingerprint);
     void add_chat_message(const std::string& peer_name, bool sender,
                           const std::string& content, const std::string& datetime,
                           int64_t timestamp_ms = 0);
+
+    // Trust handling
+    void set_on_trust_callback(std::function<void(const std::string&)> callback) { on_trust_peer_ = callback; }
+    
+    // Identity display callback
+    void set_on_show_identity(std::function<void()> callback) { on_show_identity_ = callback; }
+
+    void add_debug(const std::string& line);
 
 private:
     void render();
@@ -70,7 +81,11 @@ private:
     bool handle_people_click(int abs_y, int abs_x);
     bool activate_selected_peer();
     bool is_selected_peer_online();
-    void add_debug(const std::string& line);
+    bool is_selected_peer_trusted();
+    
+    // Trust handling
+    void draw_trust_prompt();
+    bool handle_trust_keypress(char32_t ch);
 
     bool start_stdio_capture();
     void stop_stdio_capture();
@@ -110,11 +125,23 @@ private:
     std::map<std::string, PeerInfo> peers_;
     std::map<std::string, std::chrono::steady_clock::time_point> last_seen_;
     std::set<std::string> online_peers_;
+    std::set<std::string> trusted_peers_;
+    std::set<std::string> pending_peers_;
+    std::set<std::string> mismatch_peers_;
     std::vector<PeerInfo> people_rows_;
     int selected_peer_index_{0};
+    
+    // Trust prompt state
+    bool showing_trust_prompt_{false};
+    std::string trust_prompt_peer_;
+    std::string trust_prompt_fingerprint_;
+    bool trust_prompt_is_mismatch_{false};
+    std::string trust_prompt_stored_fingerprint_;
 
     std::unique_ptr<DatabaseManager> db_manager_;
     std::function<void(const std::string&)> on_peer_offline_;
+    std::function<void(const std::string&)> on_trust_peer_;
+    std::function<void()> on_show_identity_;
 
     std::thread timeout_checker_thread_;
     void run_timeout_checker();

@@ -212,6 +212,31 @@ void TerminalUI::run() {
             break;
         }
 
+        // Handle Ctrl+Shift+D to show own public key
+        if (key_action &&
+            (input == static_cast<uint32_t>('d') || input == static_cast<uint32_t>('D')) &&
+            (ncinput_ctrl_p(&in) || in.ctrl) && (ncinput_shift_p(&in) || in.shift)) {
+            if (on_show_identity_) {
+                on_show_identity_();
+            }
+        }
+
+        // Handle trust keys (T/I) when pending peer is selected
+        if (key_action && !people_rows_.empty() && selected_peer_index_ >= 0) {
+            const std::string& selected_name = people_rows_[selected_peer_index_].username;
+            bool is_pending = false;
+            {
+                std::lock_guard<std::mutex> lock(peers_mutex_);
+                is_pending = (selected_name != "self" && 
+                             trusted_peers_.count(selected_name) == 0 &&
+                             online_peers_.count(selected_name) > 0);
+            }
+            if (is_pending && handle_trust_keypress(static_cast<char32_t>(input))) {
+                render();
+                continue;
+            }
+        }
+
         if (key_action && input == NCKEY_UP) {
             if (!people_rows_.empty()) {
                 if (selected_peer_index_ <= 0) {
@@ -283,7 +308,8 @@ void TerminalUI::stop() {
     }
 }
 
-void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port) {
+void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uint16_t tcp_port,
+                             bool trusted, bool untrusted_legacy) {
     if (name.empty() || ip.empty() || tcp_port == 0 || name == self_name_) {
         return;
     }
@@ -291,6 +317,21 @@ void TerminalUI::upsert_peer(const std::string& name, const std::string& ip, uin
     peers_[name] = PeerInfo{name, ip, tcp_port};
     online_peers_.insert(name);
     last_seen_[name] = std::chrono::steady_clock::now();
+    
+    // Update trust status
+    if (untrusted_legacy) {
+        mismatch_peers_.insert(name);
+        pending_peers_.erase(name);
+        trusted_peers_.erase(name);
+    } else if (trusted) {
+        trusted_peers_.insert(name);
+        pending_peers_.erase(name);
+        mismatch_peers_.erase(name);
+    } else {
+        pending_peers_.insert(name);
+        trusted_peers_.erase(name);
+        mismatch_peers_.erase(name);
+    }
 }
 
 void TerminalUI::mark_peer_offline(const std::string& name) {
@@ -301,6 +342,17 @@ void TerminalUI::mark_peer_offline(const std::string& name) {
     online_peers_.erase(name);
     last_seen_.erase(name);
     add_debug("peer BYE received: " + name + " marked offline");
+}
+
+void TerminalUI::show_key_mismatch(const std::string& name, const std::string& new_fingerprint,
+                                   const std::string& stored_fingerprint) {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    mismatch_peers_.insert(name);
+    trusted_peers_.erase(name);
+    pending_peers_.erase(name);
+    add_debug("SECURITY WARNING: key mismatch for " + name);
+    add_debug("  Stored: " + stored_fingerprint);
+    add_debug("  New:    " + new_fingerprint);
 }
 
 void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
@@ -479,6 +531,8 @@ void TerminalUI::draw_contacts() {
     const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0b, 0x1c, 0x16);
     const uint64_t selected_ch = make_channels(0xff, 0xff, 0xff, 0x1f, 0x60, 0x48);
     const uint64_t online_ch = make_channels(0x22, 0xc5, 0x5e, 0x0b, 0x1c, 0x16);  // Green for online dot
+    const uint64_t dim_ch = make_channels(0x80, 0x80, 0x80, 0x0b, 0x1c, 0x16);  // Grey for pending
+    const uint64_t warning_ch = make_channels(0xff, 0x44, 0x44, 0x0b, 0x1c, 0x16);  // Red for mismatch
 
     draw_panel(people_plane_, " People ", border_ch, text_ch, 0x0b1c16, 0x0b1c16, 0x10271f,
                0x10271f);
@@ -494,31 +548,50 @@ void TerminalUI::draw_contacts() {
         return;
     }
 
-    std::vector<PeerInfo> peers;
+    // Build separate lists for trusted and pending peers
+    std::vector<PeerInfo> trusted_list;
+    std::vector<PeerInfo> pending_list;
     std::set<std::string> online_set;
+    std::set<std::string> trusted_set;
+    std::set<std::string> mismatch_set;
     {
         std::lock_guard<std::mutex> lock(peers_mutex_);
-        peers.push_back(PeerInfo{"self", "", 0});
+        // Self always first in trusted list
+        trusted_list.push_back(PeerInfo{"self", "", 0});
         for (const auto& kv : peers_) {
-            peers.push_back(kv.second);
+            const auto& name = kv.first;
+            if (trusted_peers_.count(name) > 0) {
+                trusted_list.push_back(kv.second);
+            } else {
+                pending_list.push_back(kv.second);
+            }
         }
         online_set = online_peers_;
+        trusted_set = trusted_peers_;
+        mismatch_set = mismatch_peers_;
     }
-    people_rows_ = std::move(peers);
+
+    // Combine for selection tracking
+    people_rows_.clear();
+    people_rows_.reserve(1 + trusted_list.size() + pending_list.size());
+    for (const auto& p : trusted_list) {
+        people_rows_.push_back(p);
+    }
+    for (const auto& p : pending_list) {
+        people_rows_.push_back(p);
+    }
 
     if (selected_peer_index_ < 0 || selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
         selected_peer_index_ = 0;
     }
 
-    for (size_t i = 0; i < people_rows_.size(); ++i) {
-        const int y = 2 + static_cast<int>(i);
-        if (y >= static_cast<int>(rows) - 1) {
-            break;
-        }
+    int y = 2;
 
+    // Draw trusted section
+    for (size_t i = 0; i < trusted_list.size() && y < static_cast<int>(rows) - 1; ++i) {
         const bool selected = static_cast<int>(i) == selected_peer_index_;
-        const bool is_self = people_rows_[i].username == "self";
-        const bool is_online = !is_self && online_set.count(people_rows_[i].username) > 0;
+        const bool is_self = trusted_list[i].username == "self";
+        const bool is_online = !is_self && online_set.count(trusted_list[i].username) > 0;
 
         ncplane_set_channels(people_plane_, selected ? selected_ch : text_ch);
         if (selected) {
@@ -528,11 +601,10 @@ void TerminalUI::draw_contacts() {
         // Build line: "  ● username" or "  ○ username"
         std::string line;
         if (is_self) {
-            line = "  " + people_rows_[i].username;
+            line = "  " + trusted_list[i].username;
         } else {
-            // Use ● (filled circle) for online, ○ (empty circle) for offline
             line = is_online ? "  ● " : "  ○ ";
-            line += people_rows_[i].username;
+            line += trusted_list[i].username;
         }
 
         if (line.size() > cols - 2) {
@@ -541,15 +613,13 @@ void TerminalUI::draw_contacts() {
 
         // Draw the dot in green if online
         if (!is_self && is_online && cols > 4) {
-            // Draw the prefix with green dot
             ncplane_set_channels(people_plane_, online_ch);
             ncplane_putstr_yx(people_plane_, y, 1, " ●");
-            // Draw the rest with normal text color
             ncplane_set_channels(people_plane_, selected ? selected_ch : text_ch);
             if (selected) {
                 ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
             }
-            std::string name_part = " " + people_rows_[i].username;
+            std::string name_part = " " + trusted_list[i].username;
             if (name_part.size() > cols - 4) {
                 name_part.resize(cols - 4);
             }
@@ -561,6 +631,84 @@ void TerminalUI::draw_contacts() {
         if (selected) {
             ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
         }
+        ++y;
+    }
+
+    // Draw separator if there are pending peers
+    if (!pending_list.empty() && y < static_cast<int>(rows) - 1) {
+        ncplane_set_channels(people_plane_, dim_ch);
+        std::string sep = " ── unknown ── ";
+        int padding = (static_cast<int>(cols) - 2 - static_cast<int>(sep.size())) / 2;
+        if (padding < 0) padding = 0;
+        std::string line(padding, ' ');
+        line += sep;
+        if (line.size() > cols - 2) {
+            line.resize(cols - 2);
+        }
+        ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
+        ++y;
+    }
+
+    // Draw pending section (starting after trusted section)
+    size_t pending_offset = trusted_list.size();
+    for (size_t i = 0; i < pending_list.size() && y < static_cast<int>(rows) - 1; ++i) {
+        const size_t global_idx = pending_offset + i;
+        const bool selected = static_cast<int>(global_idx) == selected_peer_index_;
+        const bool is_online = online_set.count(pending_list[i].username) > 0;
+        const bool is_mismatch = mismatch_set.count(pending_list[i].username) > 0;
+
+        // Use dim color for pending peers
+        uint64_t peer_ch = selected ? selected_ch : dim_ch;
+        if (is_mismatch) {
+            peer_ch = selected ? selected_ch : warning_ch;
+        }
+        ncplane_set_channels(people_plane_, peer_ch);
+        if (selected) {
+            ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
+        }
+
+        // Build line: "  ● username" or "  ○ username" or "  ! username" for mismatch
+        std::string line;
+        if (is_mismatch) {
+            line = "  ! ";
+        } else {
+            line = is_online ? "  ● " : "  ○ ";
+        }
+        line += pending_list[i].username;
+
+        if (line.size() > cols - 2) {
+            line.resize(cols - 2);
+        }
+
+        // Draw the dot in appropriate color
+        if (cols > 4) {
+            if (is_mismatch) {
+                ncplane_set_channels(people_plane_, warning_ch);
+                ncplane_putstr_yx(people_plane_, y, 1, " !");
+            } else if (is_online) {
+                ncplane_set_channels(people_plane_, online_ch);
+                ncplane_putstr_yx(people_plane_, y, 1, " ●");
+            } else {
+                ncplane_set_channels(people_plane_, dim_ch);
+                ncplane_putstr_yx(people_plane_, y, 1, " ○");
+            }
+            ncplane_set_channels(people_plane_, peer_ch);
+            if (selected) {
+                ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
+            }
+            std::string name_part = " " + pending_list[i].username;
+            if (name_part.size() > cols - 4) {
+                name_part.resize(cols - 4);
+            }
+            ncplane_putstr_yx(people_plane_, y, 3, name_part.c_str());
+        } else {
+            ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
+        }
+
+        if (selected) {
+            ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
+        }
+        ++y;
     }
 }
 
@@ -625,6 +773,18 @@ bool TerminalUI::is_selected_peer_online() {
     return online_peers_.count(name) > 0;
 }
 
+bool TerminalUI::is_selected_peer_trusted() {
+    if (selected_peer_index_ < 0 || selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
+        return true;  // Default to true if no selection
+    }
+    const std::string& name = people_rows_[selected_peer_index_].username;
+    if (name == "self") {
+        return true;  // Self is always trusted
+    }
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    return trusted_peers_.count(name) > 0;
+}
+
 void TerminalUI::draw_chat() {
     const uint64_t border_ch = make_channels(0x93, 0xc5, 0xfd, 0x0f, 0x17, 0x2a);
     const uint64_t base_text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
@@ -655,6 +815,10 @@ void TerminalUI::draw_chat() {
         return;
     }
 
+    // Check if selected peer is trusted
+    const bool peer_trusted = is_selected_peer_trusted();
+    const bool peer_pending = !peer_trusted && active_name != "self";
+
     // If peer is offline, show offline message instead of input box
     if (!peer_online) {
         const std::string offline_msg = " Offline - cannot send messages ";
@@ -665,6 +829,12 @@ void TerminalUI::draw_chat() {
         ncplane_putstr_yx(chat_plane_, bottom_y, std::max(1, center_x), offline_msg.c_str());
         ncplane_set_channels(chat_plane_, base_text_ch);
         // Don't draw input box, return early after drawing messages
+    }
+
+    // If peer is pending (not trusted), show trust prompt instead of input box
+    if (peer_pending && peer_online) {
+        draw_trust_prompt();
+        // Don't draw input box
     }
 
     const int input_w = static_cast<int>(cols) - 2;
@@ -796,6 +966,76 @@ void TerminalUI::draw_chat() {
             ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped_input[idx].c_str());
         }
     }
+}
+
+void TerminalUI::draw_trust_prompt() {
+    if (!chat_plane_) return;
+
+    const uint64_t warning_ch = make_channels(0xff, 0xaa, 0x44, 0x0f, 0x17, 0x2a);
+    const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
+    const uint64_t dim_ch = make_channels(0x80, 0x80, 0x80, 0x0f, 0x17, 0x2a);
+
+    unsigned rows = 0, cols = 0;
+    ncplane_dim_yx(chat_plane_, &rows, &cols);
+    if (rows < 6 || cols < 40) return;
+
+    // Get selected peer name
+    std::string peer_name = "unknown";
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+            peer_name = people_rows_[selected_peer_index_].username;
+        }
+    }
+
+    const int box_y = static_cast<int>(rows) - 6;
+    const int box_h = 5;
+    const int box_w = static_cast<int>(cols) - 2;
+
+    // Draw trust prompt box
+    ncplane_cursor_move_yx(chat_plane_, box_y, 1);
+    ncplane_rounded_box_sized(chat_plane_, 0, warning_ch, box_h, box_w, 0);
+
+    ncplane_set_channels(chat_plane_, warning_ch);
+    ncplane_putstr_yx(chat_plane_, box_y, 3, " Trust Required ");
+
+    ncplane_set_channels(chat_plane_, text_ch);
+    std::string line1 = "Peer: " + peer_name;
+    ncplane_putstr_yx(chat_plane_, box_y + 1, 2, line1.c_str());
+
+    ncplane_set_channels(chat_plane_, dim_ch);
+    ncplane_putstr_yx(chat_plane_, box_y + 2, 2, "Press T to trust, I to ignore");
+    ncplane_putstr_yx(chat_plane_, box_y + 3, 2, "Verify fingerprint out-of-band!");
+}
+
+bool TerminalUI::handle_trust_keypress(char32_t ch) {
+    // Only handle T and I keys for trust decisions
+    if (ch != 't' && ch != 'T' && ch != 'i' && ch != 'I') {
+        return false;
+    }
+
+    std::string peer_name;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        if (selected_peer_index_ < 0 || selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
+            return false;
+        }
+        peer_name = people_rows_[selected_peer_index_].username;
+        if (peer_name == "self") return false;
+        if (trusted_peers_.count(peer_name) > 0) return false;  // Already trusted
+    }
+
+    if (ch == 't' || ch == 'T') {
+        // Trust this peer
+        if (on_trust_peer_) {
+            on_trust_peer_(peer_name);
+        }
+        add_debug("trusted peer: " + peer_name);
+    } else {
+        // Ignore this peer for now
+        add_debug("ignored peer: " + peer_name);
+    }
+    return true;
 }
 
 void TerminalUI::draw_debug() {
