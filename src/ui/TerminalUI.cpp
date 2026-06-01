@@ -363,8 +363,15 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
         return;
     }
 
-    // Save to database with timestamp_ms for proper ordering
-    if (db_manager_) {
+    // Check if peer is trusted before saving to database
+    bool is_trusted = false;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        is_trusted = (peer_name == "self") || (trusted_peers_.count(peer_name) > 0);
+    }
+
+    // Only save to database for trusted peers
+    if (db_manager_ && is_trusted) {
         db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms);
     }
 
