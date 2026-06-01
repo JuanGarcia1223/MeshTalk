@@ -848,7 +848,6 @@ void TerminalUI::draw_chat() {
 
     // Check if selected peer is trusted
     const bool peer_trusted = is_selected_peer_trusted();
-    const bool peer_pending = !peer_trusted && active_name != "self";
 
     // If peer is offline, show offline message instead of input box
     if (!peer_online) {
@@ -860,12 +859,6 @@ void TerminalUI::draw_chat() {
         ncplane_putstr_yx(chat_plane_, bottom_y, std::max(1, center_x), offline_msg.c_str());
         ncplane_set_channels(chat_plane_, base_text_ch);
         // Don't draw input box, return early after drawing messages
-    }
-
-    // If peer is pending (not trusted), show trust prompt instead of input box
-    if (peer_pending && peer_online) {
-        draw_trust_prompt();
-        // Don't draw input box
     }
 
     const int input_w = static_cast<int>(cols) - 2;
