@@ -741,7 +741,31 @@ bool TerminalUI::handle_people_click(int abs_y, int abs_x) {
         return false;
     }
 
-    const int idx = rel_y - 2;
+    // Check if we have pending peers (separator shown)
+    int trusted_count = 0;
+    int pending_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        // Count trusted peers (including self: 1 + trusted_peers_.size())
+        trusted_count = 1 + static_cast<int>(trusted_peers_.size());
+        pending_count = static_cast<int>(pending_peers_.size());
+    }
+
+    const int visual_idx = rel_y - 2;  // Row within the list (0 = first item)
+    int idx = visual_idx;
+
+    // Separator is at index trusted_count (0-based visual position)
+    // If separator is shown and click is at or below it, adjust index
+    if (pending_count > 0 && visual_idx >= trusted_count) {
+        // Click is on separator or in pending section
+        if (visual_idx == trusted_count) {
+            // Click is on the separator itself - ignore
+            return false;
+        }
+        // Click is in pending section, subtract 1 for the separator
+        idx = visual_idx - 1;
+    }
+
     if (idx < 0 || idx >= static_cast<int>(people_rows_.size())) {
         return false;
     }
