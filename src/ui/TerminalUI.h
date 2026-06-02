@@ -163,6 +163,7 @@ private:
     void run_timeout_checker();
 
     std::string input_buffer_;
+    int chat_scroll_offset_{0};  // Scroll position in chat (0 = at bottom)
 
     std::mutex chat_mutex_;
     std::map<std::string, std::vector<ChatItem>> chats_by_peer_;
