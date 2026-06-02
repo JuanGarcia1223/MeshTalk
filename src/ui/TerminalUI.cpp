@@ -867,10 +867,12 @@ void TerminalUI::draw_chat() {
 
     // Show untrusted peer name in red in the title
     std::string title = " Chat: " + active_name + " ";
+    uint64_t title_text_ch = base_text_ch;
     if (!peer_trusted && active_name != "self") {
-        ncplane_set_channels(chat_plane_, warning_ch);
+        title = " Chat: " + active_name + "(untrusted) ";
+        title_text_ch = warning_ch;
     }
-    draw_panel(chat_plane_, title, border_ch, base_text_ch, 0x0f172a,
+    draw_panel(chat_plane_, title, border_ch, title_text_ch, 0x0f172a,
                0x111c33, 0x0f172a, 0x111c33);
 
     unsigned rows = 0;
@@ -994,20 +996,21 @@ void TerminalUI::draw_chat() {
 
         if (!left.empty()) {
             // Check if this line starts with warning symbol (for untrusted peers)
-            if (!peer_trusted && left.size() >= 4 && left.substr(0, 4) == "⚠S: ") {
+            // ⚠ is 3 bytes in UTF-8, so "⚠S: " is 6 bytes, "⚠R: " is 6 bytes
+            if (!peer_trusted && left.size() >= 6 && left.substr(0, 6) == "⚠S: ") {
                 // Draw warning symbol in yellow
                 ncplane_set_channels(chat_plane_, warning_yellow_ch);
                 ncplane_putstr_yx(chat_plane_, y, 1, "⚠");
-                // Draw rest in sender color
+                // Draw rest in sender color (⚠ = 3 bytes, so "S: " starts at byte 3)
                 ncplane_set_channels(chat_plane_, sender_ch);
-                ncplane_putstr_yx(chat_plane_, y, 4, left.substr(4).c_str());
-            } else if (!peer_trusted && left.size() >= 4 && left.substr(0, 4) == "⚠R: ") {
+                ncplane_putstr_yx(chat_plane_, y, 4, left.substr(3).c_str());
+            } else if (!peer_trusted && left.size() >= 6 && left.substr(0, 6) == "⚠R: ") {
                 // Draw warning symbol in yellow
                 ncplane_set_channels(chat_plane_, warning_yellow_ch);
                 ncplane_putstr_yx(chat_plane_, y, 1, "⚠");
-                // Draw rest in receiver color
+                // Draw rest in receiver color (⚠ = 3 bytes, so "R: " starts at byte 3)
                 ncplane_set_channels(chat_plane_, receiver_ch);
-                ncplane_putstr_yx(chat_plane_, y, 4, left.substr(4).c_str());
+                ncplane_putstr_yx(chat_plane_, y, 4, left.substr(3).c_str());
             } else {
                 ncplane_putstr_yx(chat_plane_, y, 1, left.c_str());
             }
