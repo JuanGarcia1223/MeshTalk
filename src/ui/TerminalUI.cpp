@@ -855,6 +855,7 @@ void TerminalUI::draw_chat() {
     const uint64_t dt_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
     const uint64_t input_border_ch = make_channels(0xc4, 0xb5, 0xfd, 0x0f, 0x17, 0x2a);
     const uint64_t offline_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
+    const uint64_t warning_ch = make_channels(0xff, 0x44, 0x44, 0x0f, 0x17, 0x2a);  // Red for untrusted
 
     std::string active_name = "self";
     if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
@@ -862,13 +863,15 @@ void TerminalUI::draw_chat() {
     }
 
     const bool peer_online = is_selected_peer_online();
+    const bool peer_trusted = is_selected_peer_trusted();
 
-    draw_panel(chat_plane_, " Chat: " + active_name + " ", border_ch, base_text_ch, 0x0f172a,
-               0x111c33, 0x0f172a, 0x111c33);
-
-    if (!chat_plane_) {
-        return;
+    // Show untrusted peer name in red in the title
+    std::string title = " Chat: " + active_name + " ";
+    if (!peer_trusted && active_name != "self") {
+        ncplane_set_channels(chat_plane_, warning_ch);
     }
+    draw_panel(chat_plane_, title, border_ch, base_text_ch, 0x0f172a,
+               0x111c33, 0x0f172a, 0x111c33);
 
     unsigned rows = 0;
     unsigned cols = 0;
@@ -876,9 +879,6 @@ void TerminalUI::draw_chat() {
     if (rows < 8 || cols < 16) {
         return;
     }
-
-    // Check if selected peer is trusted
-    const bool peer_trusted = is_selected_peer_trusted();
 
     // If peer is offline, show offline message instead of input box
     if (!peer_online) {
@@ -923,7 +923,9 @@ void TerminalUI::draw_chat() {
     const int content_w = static_cast<int>(cols) - 2;
 
     for (const ChatItem& msg : items) {
-        const std::string prefix = msg.sender ? "S: " : "R: ";
+        // Add warning symbol for untrusted peers
+        const std::string warning_prefix = peer_trusted ? "" : "⚠";
+        const std::string prefix = warning_prefix + (msg.sender ? "S: " : "R: ");
         const std::string text = prefix + msg.content;
         const int dtw = static_cast<int>(msg.datetime.size());
 
@@ -973,6 +975,8 @@ void TerminalUI::draw_chat() {
         start = static_cast<int>(visual.size()) - visible_lines;
     }
 
+    const uint64_t warning_yellow_ch = make_channels(0xff, 0xff, 0x00, 0x0f, 0x17, 0x2a);  // Yellow for warning
+
     int y = chat_top;
     for (int i = start; i < static_cast<int>(visual.size()) && y <= chat_bottom; ++i, ++y) {
         const VisualLine& vl = visual[i];
@@ -989,7 +993,24 @@ void TerminalUI::draw_chat() {
         }
 
         if (!left.empty()) {
-            ncplane_putstr_yx(chat_plane_, y, 1, left.c_str());
+            // Check if this line starts with warning symbol (for untrusted peers)
+            if (!peer_trusted && left.size() >= 4 && left.substr(0, 4) == "⚠S: ") {
+                // Draw warning symbol in yellow
+                ncplane_set_channels(chat_plane_, warning_yellow_ch);
+                ncplane_putstr_yx(chat_plane_, y, 1, "⚠");
+                // Draw rest in sender color
+                ncplane_set_channels(chat_plane_, sender_ch);
+                ncplane_putstr_yx(chat_plane_, y, 4, left.substr(4).c_str());
+            } else if (!peer_trusted && left.size() >= 4 && left.substr(0, 4) == "⚠R: ") {
+                // Draw warning symbol in yellow
+                ncplane_set_channels(chat_plane_, warning_yellow_ch);
+                ncplane_putstr_yx(chat_plane_, y, 1, "⚠");
+                // Draw rest in receiver color
+                ncplane_set_channels(chat_plane_, receiver_ch);
+                ncplane_putstr_yx(chat_plane_, y, 4, left.substr(4).c_str());
+            } else {
+                ncplane_putstr_yx(chat_plane_, y, 1, left.c_str());
+            }
         }
 
         if (!vl.right.empty() && static_cast<int>(vl.right.size()) <= content_w) {
