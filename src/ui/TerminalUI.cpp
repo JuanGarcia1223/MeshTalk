@@ -238,19 +238,15 @@ void TerminalUI::run() {
             }
         }
 
+        // Arrow keys scroll chat history
         if (key_action && input == NCKEY_UP) {
-            if (!people_rows_.empty()) {
-                if (selected_peer_index_ <= 0) {
-                    selected_peer_index_ = static_cast<int>(people_rows_.size()) - 1;
-                } else {
-                    --selected_peer_index_;
-                }
-            }
+            ++chat_scroll_offset_;
         } else if (key_action && input == NCKEY_DOWN) {
-            if (!people_rows_.empty()) {
-                selected_peer_index_ =
-                    (selected_peer_index_ + 1) % static_cast<int>(people_rows_.size());
+            if (chat_scroll_offset_ > 0) {
+                --chat_scroll_offset_;
             }
+        } else if (key_action && input == NCKEY_PGDOWN) {
+            chat_scroll_offset_ = 0;  // Jump to bottom
         } else if (key_action && (input == NCKEY_ENTER || input == '\n' || input == '\r')) {
             if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
                 selected_peer_index_ < static_cast<int>(people_rows_.size())) {
@@ -270,6 +266,7 @@ void TerminalUI::run() {
                     }
                 }
                 input_buffer_.clear();
+                chat_scroll_offset_ = 0;  // Auto-scroll to bottom after sending
             }
         } else if (key_action &&
                    (input == NCKEY_BACKSPACE || input == 127 || input == '\b')) {
@@ -279,6 +276,12 @@ void TerminalUI::run() {
         } else if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
                    (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
             handle_people_click(in.y, in.x);
+        } else if (nckey_mouse_p(input) && input == NCKEY_SCROLL_UP) {
+            ++chat_scroll_offset_;
+        } else if (nckey_mouse_p(input) && input == NCKEY_SCROLL_DOWN) {
+            if (chat_scroll_offset_ > 0) {
+                --chat_scroll_offset_;
+            }
         } else if (key_action && input >= 32 && input <= 126) {
             if (input_buffer_.size() < 8192) {
                 input_buffer_.push_back(static_cast<char>(input));
@@ -778,6 +781,7 @@ bool TerminalUI::handle_people_click(int abs_y, int abs_x) {
     }
 
     selected_peer_index_ = idx;
+    chat_scroll_offset_ = 0;  // Reset scroll when switching peers
     return activate_selected_peer();
 }
 
@@ -974,7 +978,15 @@ void TerminalUI::draw_chat() {
 
     int start = 0;
     if (static_cast<int>(visual.size()) > visible_lines) {
-        start = static_cast<int>(visual.size()) - visible_lines;
+        // Calculate start based on scroll offset (0 = at bottom)
+        start = static_cast<int>(visual.size()) - visible_lines - chat_scroll_offset_;
+        // Clamp start to valid range
+        if (start < 0) {
+            start = 0;
+            chat_scroll_offset_ = static_cast<int>(visual.size()) - visible_lines;
+        }
+    } else {
+        chat_scroll_offset_ = 0;  // Reset scroll when all content fits
     }
 
     const uint64_t warning_yellow_ch = make_channels(0xff, 0xff, 0x00, 0x0f, 0x17, 0x2a);  // Yellow for warning
