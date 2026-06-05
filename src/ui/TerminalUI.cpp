@@ -206,7 +206,24 @@ void TerminalUI::run() {
             (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_REPEAT ||
              in.evtype == NCTYPE_UNKNOWN);
 
-        // Handle modal dialog first (it blocks other inputs)
+        // Handle identity popup first (it blocks other inputs)
+        if (showing_identity_popup_) {
+            if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
+                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
+                if (handle_identity_popup_click(in.y, in.x)) {
+                    render();
+                    continue;
+                }
+            } else if (key_action && handle_identity_popup_key(static_cast<char32_t>(input))) {
+                render();
+                continue;
+            }
+            // Any other input while popup is open just re-renders
+            render();
+            continue;
+        }
+
+        // Handle trust modal (it blocks other inputs)
         if (showing_trust_modal_) {
             if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
                 (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
@@ -423,6 +440,11 @@ void TerminalUI::render() {
     // Draw trust modal on top if showing
     if (showing_trust_modal_) {
         draw_trust_modal();
+    }
+
+    // Draw identity popup on top if showing
+    if (showing_identity_popup_) {
+        draw_identity_popup();
     }
 
     notcurses_render(nc_);
@@ -1321,6 +1343,124 @@ bool TerminalUI::handle_trust_modal_key(char32_t ch) {
         case 'Q':
             add_debug("cancelled trust dialog for: " + trust_modal_peer_);
             close_trust_modal();
+            return true;
+    }
+    return false;
+}
+
+void TerminalUI::show_identity_popup(const std::string& fingerprint) {
+    if (showing_identity_popup_) {
+        close_identity_popup();
+    }
+    showing_identity_popup_ = true;
+    identity_popup_fingerprint_ = fingerprint;
+    identity_popup_plane_ = nullptr;
+}
+
+void TerminalUI::close_identity_popup() {
+    showing_identity_popup_ = false;
+    identity_popup_fingerprint_.clear();
+    if (identity_popup_plane_) {
+        ncplane_destroy(identity_popup_plane_);
+        identity_popup_plane_ = nullptr;
+    }
+}
+
+void TerminalUI::draw_identity_popup() {
+    if (!showing_identity_popup_ || !nc_) return;
+
+    // Get terminal dimensions
+    unsigned term_rows = 0, term_cols = 0;
+    notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
+
+    // Modal dimensions
+    const int modal_w = 50;
+    const int modal_h = 8;
+    const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
+    const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
+
+    // Create or recreate the popup plane
+    if (!identity_popup_plane_) {
+        identity_popup_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "identity_popup");
+        if (!identity_popup_plane_) return;
+    }
+
+    // Colors
+    const uint64_t border_ch = make_channels(0x22, 0xc5, 0x5e, 0x22, 0x12, 0x29);  // Green border
+    const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x22, 0x12, 0x29);
+    const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
+    const uint64_t fp_ch = make_channels(0xff, 0xff, 0x00, 0x22, 0x12, 0x29);  // Yellow fingerprint
+    const uint64_t button_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);  // Green button
+
+    // Clear and draw border
+    ncplane_erase(identity_popup_plane_);
+    ncplane_set_channels(identity_popup_plane_, border_ch);
+    ncplane_rounded_box_sized(identity_popup_plane_, 0, border_ch, modal_h, modal_w, 0);
+
+    // Title
+    ncplane_set_channels(identity_popup_plane_, title_ch);
+    ncplane_on_styles(identity_popup_plane_, NCSTYLE_BOLD);
+    ncplane_putstr_yx(identity_popup_plane_, 1, 2, " Your Public Key Fingerprint ");
+    ncplane_off_styles(identity_popup_plane_, NCSTYLE_BOLD);
+
+    // Fingerprint (centered)
+    ncplane_set_channels(identity_popup_plane_, fp_ch);
+    int fp_x = (modal_w - static_cast<int>(identity_popup_fingerprint_.size())) / 2;
+    if (fp_x < 2) fp_x = 2;
+    ncplane_putstr_yx(identity_popup_plane_, 3, fp_x, identity_popup_fingerprint_.c_str());
+
+    // Instruction
+    ncplane_set_channels(identity_popup_plane_, text_ch);
+    std::string instr = "Share this with others to verify your identity";
+    int instr_x = (modal_w - static_cast<int>(instr.size())) / 2;
+    if (instr_x < 2) instr_x = 2;
+    ncplane_putstr_yx(identity_popup_plane_, 5, instr_x, instr.c_str());
+
+    // OK button (centered at bottom)
+    ncplane_set_channels(identity_popup_plane_, button_ch);
+    int btn_x = (modal_w - 8) / 2;
+    ncplane_putstr_yx(identity_popup_plane_, modal_h - 2, btn_x, "  [ OK ]  ");
+}
+
+bool TerminalUI::handle_identity_popup_click(int abs_y, int abs_x) {
+    if (!showing_identity_popup_ || !identity_popup_plane_) return false;
+
+    int plane_y = 0, plane_x = 0;
+    ncplane_abs_yx(identity_popup_plane_, &plane_y, &plane_x);
+
+    unsigned h = 0, w = 0;
+    ncplane_dim_yx(identity_popup_plane_, &h, &w);
+
+    const int rel_y = abs_y - plane_y;
+    const int rel_x = abs_x - plane_x;
+
+    // Check if click is within the OK button area (bottom row, centered)
+    if (rel_y == static_cast<int>(h) - 2 && rel_x >= static_cast<int>(w)/2 - 4 && rel_x <= static_cast<int>(w)/2 + 4) {
+        close_identity_popup();
+        return true;
+    }
+
+    // Click anywhere else in the popup also closes it
+    if (rel_y >= 0 && rel_y < static_cast<int>(h) && rel_x >= 0 && rel_x < static_cast<int>(w)) {
+        return true;  // Absorb click but don't close unless on OK
+    }
+
+    return false;
+}
+
+bool TerminalUI::handle_identity_popup_key(char32_t ch) {
+    if (!showing_identity_popup_) return false;
+
+    switch (ch) {
+        case NCKEY_ENTER:
+        case '\n':
+        case '\r':
+        case 27:  // Escape
+        case 'q':
+        case 'Q':
+        case 'o':
+        case 'O':
+            close_identity_popup();
             return true;
     }
     return false;

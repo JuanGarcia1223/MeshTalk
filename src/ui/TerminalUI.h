@@ -64,6 +64,13 @@ public:
     // Identity display callback
     void set_on_show_identity(std::function<void()> callback) { on_show_identity_ = callback; }
 
+    // Identity popup
+    void show_identity_popup(const std::string& fingerprint);
+    void close_identity_popup();
+    void draw_identity_popup();
+    bool handle_identity_popup_click(int abs_y, int abs_x);
+    bool handle_identity_popup_key(char32_t ch);
+
     void add_debug(const std::string& line);
 
 private:
@@ -153,6 +160,11 @@ private:
     std::string trust_modal_fingerprint_;
     int trust_modal_selected_button_{0};  // 0 = Accept, 1 = Reject
     ncplane* trust_modal_plane_{nullptr};
+
+    // Identity popup state
+    bool showing_identity_popup_{false};
+    std::string identity_popup_fingerprint_;
+    ncplane* identity_popup_plane_{nullptr};
 
     std::unique_ptr<DatabaseManager> db_manager_;
     std::function<void(const std::string&)> on_peer_offline_;
