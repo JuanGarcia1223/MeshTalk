@@ -160,9 +160,7 @@ int main(int argc, char** argv) {
     });
     
     ui.set_on_show_identity([&key_manager, &ui]() {
-        ui.add_debug("=== Your Public Key Fingerprint ===");
-        ui.add_debug(key_manager.myFingerprint());
-        ui.add_debug("Share this fingerprint with others to verify your identity");
+        ui.show_identity_popup(key_manager.myFingerprint());
     });
 
     UdpHelloBroadcaster broadcaster(
