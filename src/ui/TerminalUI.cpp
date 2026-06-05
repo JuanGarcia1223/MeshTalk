@@ -1066,15 +1066,24 @@ void TerminalUI::draw_chat() {
         }
 
         // Draw blinking cursor at end of input
-        if (cursor_visible_ && !input_buffer_.empty()) {
-            const int last_line_idx = static_cast<int>(wrapped_input.size()) - 1 - input_start;
-            if (last_line_idx >= 0 && last_line_idx < input_visible) {
-                const std::string& last_line = wrapped_input[last_line_idx + input_start];
-                int cursor_x = 2 + static_cast<int>(last_line.size());
-                if (cursor_x < input_w) {
-                    ncplane_set_channels(chat_plane_, make_channels(0x00, 0x00, 0x00, 0xff, 0xff, 0xff));
-                    ncplane_putstr_yx(chat_plane_, input_y + 1 + last_line_idx, cursor_x, " ");
+        if (cursor_visible_) {
+            int cursor_line = 0;
+            int cursor_x = 2;
+            
+            if (!input_buffer_.empty() && !wrapped_input.empty()) {
+                // Cursor at end of text
+                cursor_line = static_cast<int>(wrapped_input.size()) - 1 - input_start;
+                if (cursor_line >= 0 && cursor_line < input_visible) {
+                    const std::string& last_line = wrapped_input[cursor_line + input_start];
+                    cursor_x = 2 + static_cast<int>(last_line.size());
                 }
+            }
+            
+            // Ensure cursor is within bounds
+            if (cursor_line >= 0 && cursor_line < input_visible && cursor_x < input_w) {
+                // Draw cursor as inverse video block
+                ncplane_set_channels(chat_plane_, make_channels(0x00, 0x00, 0x00, 0xff, 0xff, 0xff));
+                ncplane_putstr_yx(chat_plane_, input_y + 1 + cursor_line, cursor_x, " ");
             }
         }
     }
