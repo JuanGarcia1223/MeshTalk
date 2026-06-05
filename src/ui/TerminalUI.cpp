@@ -237,6 +237,7 @@ void TerminalUI::run() {
             if (on_show_identity_) {
                 on_show_identity_();
             }
+            continue;  // Don't add 'D' to input buffer
         }
 
         // Arrow keys scroll chat history
