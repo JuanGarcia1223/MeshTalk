@@ -186,6 +186,7 @@ void TerminalUI::run() {
     }
 
     running_ = true;
+    last_cursor_toggle_ = std::chrono::steady_clock::now();
     timeout_checker_thread_ = std::thread(&TerminalUI::run_timeout_checker, this);
     add_debug("press Ctrl+C to quit");
     render();
@@ -286,6 +287,13 @@ void TerminalUI::run() {
             if (input_buffer_.size() < 8192) {
                 input_buffer_.push_back(static_cast<char>(input));
             }
+        }
+
+        // Toggle cursor blink every 500ms
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_cursor_toggle_).count() > 500) {
+            cursor_visible_ = !cursor_visible_;
+            last_cursor_toggle_ = now;
         }
 
         render();
@@ -1055,6 +1063,19 @@ void TerminalUI::draw_chat() {
                 break;
             }
             ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped_input[idx].c_str());
+        }
+
+        // Draw blinking cursor at end of input
+        if (cursor_visible_ && !input_buffer_.empty()) {
+            const int last_line_idx = static_cast<int>(wrapped_input.size()) - 1 - input_start;
+            if (last_line_idx >= 0 && last_line_idx < input_visible) {
+                const std::string& last_line = wrapped_input[last_line_idx + input_start];
+                int cursor_x = 2 + static_cast<int>(last_line.size());
+                if (cursor_x < input_w) {
+                    ncplane_set_channels(chat_plane_, make_channels(0x00, 0x00, 0x00, 0xff, 0xff, 0xff));
+                    ncplane_putstr_yx(chat_plane_, input_y + 1 + last_line_idx, cursor_x, " ");
+                }
+            }
         }
     }
 }

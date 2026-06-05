@@ -164,6 +164,10 @@ private:
 
     std::string input_buffer_;
     int chat_scroll_offset_{0};  // Scroll position in chat (0 = at bottom)
+    
+    // Blinking cursor state
+    bool cursor_visible_{true};
+    std::chrono::steady_clock::time_point last_cursor_toggle_;
 
     std::mutex chat_mutex_;
     std::map<std::string, std::vector<ChatItem>> chats_by_peer_;
