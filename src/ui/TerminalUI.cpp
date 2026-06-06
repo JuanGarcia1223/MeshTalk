@@ -1229,9 +1229,22 @@ void TerminalUI::draw_trust_modal() {
     const uint64_t dim_ch = make_channels(0x80, 0x80, 0x80, 0x22, 0x12, 0x29);
     const uint64_t button_selected_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);
     const uint64_t button_unselected_ch = make_channels(0xe2, 0xe8, 0xf0, 0x44, 0x44, 0x44);
+    const uint32_t bg_color = 0x221229;
 
-    // Clear and draw border
+    // Clear and fill background
     ncplane_erase(trust_modal_plane_);
+    uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
+    ncchannels_set_bg_rgb(&ul, bg_color);
+    ncchannels_set_bg_rgb(&ur, bg_color);
+    ncchannels_set_bg_rgb(&ll, bg_color);
+    ncchannels_set_bg_rgb(&lr, bg_color);
+    ncchannels_set_fg_rgb(&ul, bg_color);
+    ncchannels_set_fg_rgb(&ur, bg_color);
+    ncchannels_set_fg_rgb(&ll, bg_color);
+    ncchannels_set_fg_rgb(&lr, bg_color);
+    ncplane_gradient(trust_modal_plane_, 0, 0, modal_h, modal_w, " ", 0, ul, ur, ll, lr);
+
+    // Draw border
     ncplane_set_channels(trust_modal_plane_, border_ch);
     ncplane_rounded_box_sized(trust_modal_plane_, 0, border_ch, modal_h, modal_w, 0);
 
@@ -1391,9 +1404,22 @@ void TerminalUI::draw_identity_popup() {
     const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
     const uint64_t fp_ch = make_channels(0xff, 0xff, 0x00, 0x22, 0x12, 0x29);  // Yellow fingerprint
     const uint64_t button_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);  // Green button
+    const uint32_t bg_color = 0x221229;
 
-    // Clear and draw border
+    // Clear and fill background
     ncplane_erase(identity_popup_plane_);
+    uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
+    ncchannels_set_bg_rgb(&ul, bg_color);
+    ncchannels_set_bg_rgb(&ur, bg_color);
+    ncchannels_set_bg_rgb(&ll, bg_color);
+    ncchannels_set_bg_rgb(&lr, bg_color);
+    ncchannels_set_fg_rgb(&ul, bg_color);
+    ncchannels_set_fg_rgb(&ur, bg_color);
+    ncchannels_set_fg_rgb(&ll, bg_color);
+    ncchannels_set_fg_rgb(&lr, bg_color);
+    ncplane_gradient(identity_popup_plane_, 0, 0, modal_h, modal_w, " ", 0, ul, ur, ll, lr);
+
+    // Draw border
     ncplane_set_channels(identity_popup_plane_, border_ch);
     ncplane_rounded_box_sized(identity_popup_plane_, 0, border_ch, modal_h, modal_w, 0);
 
