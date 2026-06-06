@@ -71,6 +71,11 @@ public:
     bool handle_identity_popup_click(int abs_y, int abs_x);
     bool handle_identity_popup_key(char32_t ch);
 
+    // Command subsystem
+    void draw_command_menu();
+    void execute_command(int cmd_idx);
+    void close_command_menu();
+
     void add_debug(const std::string& line);
 
 private:
@@ -180,6 +185,16 @@ private:
     // Blinking cursor state
     bool cursor_visible_{true};
     std::chrono::steady_clock::time_point last_cursor_toggle_;
+
+    // Command subsystem state
+    bool showing_command_menu_{false};
+    int selected_command_{0};
+    std::vector<std::pair<std::string, std::string>> commands_ = {
+        {"/HI", "Send hello message"},
+        {"/BYE", "Send goodbye message"},
+        {"/STATUS", "Show peer status"},
+        {"/CLEAR", "Clear chat history"}
+    };
 
     std::mutex chat_mutex_;
     std::map<std::string, std::vector<ChatItem>> chats_by_peer_;

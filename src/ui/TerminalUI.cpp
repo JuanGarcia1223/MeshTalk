@@ -257,16 +257,26 @@ void TerminalUI::run() {
             continue;  // Don't add 'D' to input buffer
         }
 
-        // Arrow keys scroll chat history
+        // Arrow keys scroll chat history (or navigate commands if menu is open)
         if (key_action && input == NCKEY_UP) {
-            ++chat_scroll_offset_;
+            if (showing_command_menu_) {
+                if (selected_command_ > 0) --selected_command_;
+            } else {
+                ++chat_scroll_offset_;
+            }
         } else if (key_action && input == NCKEY_DOWN) {
-            if (chat_scroll_offset_ > 0) {
+            if (showing_command_menu_) {
+                if (selected_command_ < static_cast<int>(commands_.size()) - 1) ++selected_command_;
+            } else if (chat_scroll_offset_ > 0) {
                 --chat_scroll_offset_;
             }
         } else if (key_action && input == NCKEY_PGDOWN) {
             chat_scroll_offset_ = 0;  // Jump to bottom
         } else if (key_action && (input == NCKEY_ENTER || input == '\n' || input == '\r')) {
+            if (showing_command_menu_) {
+                execute_command(selected_command_);
+                continue;
+            }
             if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
                 selected_peer_index_ < static_cast<int>(people_rows_.size())) {
                 // Don't allow sending if peer is offline
@@ -291,6 +301,14 @@ void TerminalUI::run() {
                    (input == NCKEY_BACKSPACE || input == 127 || input == '\b')) {
             if (!input_buffer_.empty()) {
                 input_buffer_.pop_back();
+                // Close command menu if buffer is now empty or doesn't start with '/'
+                if (showing_command_menu_ && (input_buffer_.empty() || input_buffer_[0] != '/')) {
+                    close_command_menu();
+                }
+            }
+        } else if (key_action && input == 27) {  // Escape key
+            if (showing_command_menu_) {
+                close_command_menu();
             }
         } else if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
                    (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
@@ -304,6 +322,11 @@ void TerminalUI::run() {
         } else if (key_action && input >= 32 && input <= 126) {
             if (input_buffer_.size() < 8192) {
                 input_buffer_.push_back(static_cast<char>(input));
+                // Check if we just typed '/' as first character
+                if (input_buffer_ == "/") {
+                    showing_command_menu_ = true;
+                    selected_command_ = 0;
+                }
             }
         }
 
@@ -1110,6 +1133,95 @@ void TerminalUI::draw_chat() {
             }
         }
     }
+
+    // Draw command menu if showing
+    if (showing_command_menu_ && peer_online) {
+        draw_command_menu();
+    }
+}
+
+void TerminalUI::draw_command_menu() {
+    if (!chat_plane_) return;
+
+    const uint64_t border_ch = make_channels(0x22, 0xc5, 0x5e, 0x0f, 0x17, 0x2a);  // Green border
+    const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x0f, 0x17, 0x2a);
+    const uint64_t selected_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);  // Green bg
+    const uint64_t normal_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
+    const uint64_t dim_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
+
+    unsigned rows = 0, cols = 0;
+    ncplane_dim_yx(chat_plane_, &rows, &cols);
+    if (rows < 12 || cols < 30) return;
+
+    const int menu_w = std::min(40, static_cast<int>(cols) - 4);
+    const int menu_h = static_cast<int>(commands_.size()) + 3;  // Title + commands + padding
+    const int menu_x = (static_cast<int>(cols) - menu_w) / 2;
+    const int menu_y = static_cast<int>(rows) - menu_h - 4;  // Above input box
+
+    // Draw menu box
+    ncplane_cursor_move_yx(chat_plane_, menu_y, menu_x);
+    ncplane_rounded_box_sized(chat_plane_, 0, border_ch, menu_h, menu_w, 0);
+
+    // Title
+    ncplane_set_channels(chat_plane_, title_ch);
+    ncplane_on_styles(chat_plane_, NCSTYLE_BOLD);
+    ncplane_putstr_yx(chat_plane_, menu_y, menu_x + 2, " Commands ");
+    ncplane_off_styles(chat_plane_, NCSTYLE_BOLD);
+
+    // Commands
+    for (size_t i = 0; i < commands_.size(); ++i) {
+        int y = menu_y + 1 + static_cast<int>(i);
+        if (static_cast<int>(i) == selected_command_) {
+            ncplane_set_channels(chat_plane_, selected_ch);
+            std::string line = " " + commands_[i].first;
+            // Pad to fill width for highlight
+            while (static_cast<int>(line.size()) < menu_w - 2) line += " ";
+            ncplane_putstr_yx(chat_plane_, y, menu_x + 1, line.c_str());
+        } else {
+            ncplane_set_channels(chat_plane_, normal_ch);
+            ncplane_putstr_yx(chat_plane_, y, menu_x + 2, commands_[i].first.c_str());
+        }
+        // Description
+        ncplane_set_channels(chat_plane_, dim_ch);
+        int desc_x = menu_x + 10;
+        if (desc_x < static_cast<int>(cols) - 2) {
+            ncplane_putstr_yx(chat_plane_, y, desc_x, commands_[i].second.c_str());
+        }
+    }
+}
+
+void TerminalUI::close_command_menu() {
+    showing_command_menu_ = false;
+    selected_command_ = 0;
+}
+
+void TerminalUI::execute_command(int cmd_idx) {
+    if (cmd_idx < 0 || cmd_idx >= static_cast<int>(commands_.size())) return;
+
+    const std::string& cmd = commands_[cmd_idx].first;
+    
+    if (cmd == "/HI") {
+        input_buffer_ = "Hello!";
+    } else if (cmd == "/BYE") {
+        input_buffer_ = "Goodbye!";
+    } else if (cmd == "/STATUS") {
+        add_debug("Command: STATUS - showing peer status");
+        input_buffer_.clear();
+    } else if (cmd == "/CLEAR") {
+        // Clear chat history for current peer
+        std::string active_name = "self";
+        if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+            active_name = people_rows_[selected_peer_index_].username;
+        }
+        {
+            std::lock_guard<std::mutex> lock(chat_mutex_);
+            chats_by_peer_[active_name].clear();
+        }
+        add_debug("Cleared chat history for: " + active_name);
+        input_buffer_.clear();
+    }
+
+    close_command_menu();
 }
 
 void TerminalUI::draw_trust_prompt() {
