@@ -279,6 +279,13 @@ void TerminalUI::run() {
             }
             if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
                 selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+                // Check if input is a command (starts with /)
+                if (input_buffer_[0] == '/') {
+                    handle_command_input(input_buffer_);
+                    input_buffer_.clear();
+                    chat_scroll_offset_ = 0;
+                    continue;
+                }
                 // Don't allow sending if peer is offline
                 if (!is_selected_peer_online()) {
                     add_debug("cannot send: peer is offline");
@@ -1198,17 +1205,54 @@ void TerminalUI::close_command_menu() {
 void TerminalUI::execute_command(int cmd_idx) {
     if (cmd_idx < 0 || cmd_idx >= static_cast<int>(commands_.size())) return;
 
-    const std::string& cmd = commands_[cmd_idx].first;
-    
+    // Just put the command in the input buffer as autocomplete
+    // User can then type more text and press Enter to send
+    input_buffer_ = commands_[cmd_idx].first + " ";
+
+    close_command_menu();
+}
+
+void TerminalUI::handle_command_input(const std::string& cmd_line) {
+    // Parse command and optional arguments
+    size_t space_pos = cmd_line.find(' ');
+    std::string cmd = (space_pos == std::string::npos) ? cmd_line : cmd_line.substr(0, space_pos);
+    std::string args = (space_pos == std::string::npos) ? "" : cmd_line.substr(space_pos + 1);
+
     if (cmd == "/HI") {
-        input_buffer_ = "Hello!";
+        std::string msg = args.empty() ? "Hello!" : args;
+        // Send the message
+        if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+            const PeerInfo peer = people_rows_[selected_peer_index_];
+            if (peer.username == "self") {
+                add_chat_message("self", true, msg, local_datetime_now(), unix_epoch_ms_now());
+            } else if (on_send_chat_ && is_selected_peer_online()) {
+                if (on_send_chat_(peer, msg)) {
+                    add_chat_message(peer.username, true, msg, local_datetime_now(), unix_epoch_ms_now());
+                }
+            }
+        }
     } else if (cmd == "/BYE") {
-        input_buffer_ = "Goodbye!";
+        std::string msg = args.empty() ? "Goodbye!" : args;
+        if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+            const PeerInfo peer = people_rows_[selected_peer_index_];
+            if (peer.username == "self") {
+                add_chat_message("self", true, msg, local_datetime_now(), unix_epoch_ms_now());
+            } else if (on_send_chat_ && is_selected_peer_online()) {
+                if (on_send_chat_(peer, msg)) {
+                    add_chat_message(peer.username, true, msg, local_datetime_now(), unix_epoch_ms_now());
+                }
+            }
+        }
     } else if (cmd == "/STATUS") {
         add_debug("Command: STATUS - showing peer status");
-        input_buffer_.clear();
+        std::string active_name = "self";
+        if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+            active_name = people_rows_[selected_peer_index_].username;
+        }
+        bool online = is_selected_peer_online();
+        bool trusted = is_selected_peer_trusted();
+        add_debug("Peer: " + active_name + " | Online: " + (online ? "yes" : "no") + " | Trusted: " + (trusted ? "yes" : "no"));
     } else if (cmd == "/CLEAR") {
-        // Clear chat history for current peer
         std::string active_name = "self";
         if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
             active_name = people_rows_[selected_peer_index_].username;
@@ -1218,10 +1262,9 @@ void TerminalUI::execute_command(int cmd_idx) {
             chats_by_peer_[active_name].clear();
         }
         add_debug("Cleared chat history for: " + active_name);
-        input_buffer_.clear();
+    } else {
+        add_debug("Unknown command: " + cmd);
     }
-
-    close_command_menu();
 }
 
 void TerminalUI::draw_trust_prompt() {
