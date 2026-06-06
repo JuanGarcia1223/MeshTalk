@@ -75,6 +75,7 @@ public:
     void draw_command_menu();
     void execute_command(int cmd_idx);
     void close_command_menu();
+    void handle_command_input(const std::string& cmd_line);
 
     void add_debug(const std::string& line);
 
