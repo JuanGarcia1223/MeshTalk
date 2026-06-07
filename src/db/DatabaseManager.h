@@ -41,6 +41,7 @@ public:
 
     std::vector<ChatMessageRecord> loadAllMessages();
     std::vector<ChatMessageRecord> loadMessagesForPeer(const std::string& peer_name);
+    bool clearMessagesForPeer(const std::string& peer_name);
 
     std::vector<std::string> getAllPeers();
 
