@@ -284,6 +284,10 @@ void TerminalUI::run() {
         } else if (key_action && input == NCKEY_PGDOWN) {
             chat_scroll_offset_ = 0;  // Jump to bottom
         } else if (key_action && (input == NCKEY_ENTER || input == '\n' || input == '\r')) {
+            // Close command menu on Enter (whether sending message or executing command)
+            if (showing_command_menu_) {
+                close_command_menu();
+            }
             if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
                 selected_peer_index_ < static_cast<int>(people_rows_.size())) {
                 // Check if input is a command (starts with /)
@@ -1166,6 +1170,7 @@ void TerminalUI::draw_command_menu() {
     const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x0f, 0x17, 0x2a);
     const uint64_t cmd_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
     const uint64_t dim_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
+    const uint32_t bg_color = 0x0f172a;  // Chat background color
 
     unsigned rows = 0, cols = 0;
     ncplane_dim_yx(chat_plane_, &rows, &cols);
@@ -1175,6 +1180,17 @@ void TerminalUI::draw_command_menu() {
     const int menu_h = static_cast<int>(commands_.size()) + 3;  // Title + commands + padding
     const int menu_x = (static_cast<int>(cols) - menu_w) / 2;
     const int menu_y = static_cast<int>(rows) - menu_h - 4;  // Above input box
+
+    // Clear background behind menu to prevent text bleeding
+    uint64_t bg_ch = 0;
+    ncchannels_set_bg_rgb(&bg_ch, bg_color);
+    ncchannels_set_fg_rgb(&bg_ch, bg_color);
+    for (int y = menu_y; y < menu_y + menu_h && y < static_cast<int>(rows); ++y) {
+        for (int x = menu_x; x < menu_x + menu_w && x < static_cast<int>(cols); ++x) {
+            ncplane_set_channels(chat_plane_, bg_ch);
+            ncplane_putstr_yx(chat_plane_, y, x, " ");
+        }
+    }
 
     // Draw menu box
     ncplane_cursor_move_yx(chat_plane_, menu_y, menu_x);
