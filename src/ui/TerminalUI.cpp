@@ -257,26 +257,16 @@ void TerminalUI::run() {
             continue;  // Don't add 'D' to input buffer
         }
 
-        // Arrow keys scroll chat history (or navigate commands if menu is open)
+        // Arrow keys scroll chat history
         if (key_action && input == NCKEY_UP) {
-            if (showing_command_menu_) {
-                if (selected_command_ > 0) --selected_command_;
-            } else {
-                ++chat_scroll_offset_;
-            }
+            ++chat_scroll_offset_;
         } else if (key_action && input == NCKEY_DOWN) {
-            if (showing_command_menu_) {
-                if (selected_command_ < static_cast<int>(commands_.size()) - 1) ++selected_command_;
-            } else if (chat_scroll_offset_ > 0) {
+            if (chat_scroll_offset_ > 0) {
                 --chat_scroll_offset_;
             }
         } else if (key_action && input == NCKEY_PGDOWN) {
             chat_scroll_offset_ = 0;  // Jump to bottom
         } else if (key_action && (input == NCKEY_ENTER || input == '\n' || input == '\r')) {
-            if (showing_command_menu_) {
-                execute_command(selected_command_);
-                continue;
-            }
             if (!input_buffer_.empty() && selected_peer_index_ >= 0 &&
                 selected_peer_index_ < static_cast<int>(people_rows_.size())) {
                 // Check if input is a command (starts with /)
@@ -1152,8 +1142,7 @@ void TerminalUI::draw_command_menu() {
 
     const uint64_t border_ch = make_channels(0x22, 0xc5, 0x5e, 0x0f, 0x17, 0x2a);  // Green border
     const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x0f, 0x17, 0x2a);
-    const uint64_t selected_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);  // Green bg
-    const uint64_t normal_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
+    const uint64_t cmd_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
     const uint64_t dim_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
 
     unsigned rows = 0, cols = 0;
@@ -1175,19 +1164,11 @@ void TerminalUI::draw_command_menu() {
     ncplane_putstr_yx(chat_plane_, menu_y, menu_x + 2, " Commands ");
     ncplane_off_styles(chat_plane_, NCSTYLE_BOLD);
 
-    // Commands
+    // Commands - just reference, no selection
     for (size_t i = 0; i < commands_.size(); ++i) {
         int y = menu_y + 1 + static_cast<int>(i);
-        if (static_cast<int>(i) == selected_command_) {
-            ncplane_set_channels(chat_plane_, selected_ch);
-            std::string line = " " + commands_[i].first;
-            // Pad to fill width for highlight
-            while (static_cast<int>(line.size()) < menu_w - 2) line += " ";
-            ncplane_putstr_yx(chat_plane_, y, menu_x + 1, line.c_str());
-        } else {
-            ncplane_set_channels(chat_plane_, normal_ch);
-            ncplane_putstr_yx(chat_plane_, y, menu_x + 2, commands_[i].first.c_str());
-        }
+        ncplane_set_channels(chat_plane_, cmd_ch);
+        ncplane_putstr_yx(chat_plane_, y, menu_x + 2, commands_[i].first.c_str());
         // Description
         ncplane_set_channels(chat_plane_, dim_ch);
         int desc_x = menu_x + 10;
