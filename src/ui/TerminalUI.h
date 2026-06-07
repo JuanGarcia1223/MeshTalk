@@ -77,6 +77,13 @@ public:
     void close_command_menu();
     void handle_command_input(const std::string& cmd_line);
 
+    // Clear chat confirmation modal
+    void show_clear_modal(const std::string& peer_name);
+    void close_clear_modal();
+    void draw_clear_modal();
+    bool handle_clear_modal_click(int abs_y, int abs_x);
+    bool handle_clear_modal_key(char32_t ch);
+
     void add_debug(const std::string& line);
 
 private:
@@ -171,6 +178,12 @@ private:
     bool showing_identity_popup_{false};
     std::string identity_popup_fingerprint_;
     ncplane* identity_popup_plane_{nullptr};
+
+    // Clear chat confirmation modal state
+    bool showing_clear_modal_{false};
+    std::string clear_modal_peer_;
+    int clear_modal_selected_button_{0};  // 0 = Accept, 1 = Reject
+    ncplane* clear_modal_plane_{nullptr};
 
     std::unique_ptr<DatabaseManager> db_manager_;
     std::function<void(const std::string&)> on_peer_offline_;

@@ -207,6 +207,24 @@ std::vector<ChatMessageRecord> DatabaseManager::loadMessagesForPeer(const std::s
     return records;
 }
 
+bool DatabaseManager::clearMessagesForPeer(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement query(*db_, "DELETE FROM messages WHERE peer_name = ?");
+        query.bind(1, peer_name);
+        query.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to clear messages for peer: " << ex.what() << "\n";
+        return false;
+    }
+}
+
 std::vector<std::string> DatabaseManager::getAllPeers() {
     std::lock_guard<std::mutex> lock(mutex_);
 

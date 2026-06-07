@@ -223,6 +223,23 @@ void TerminalUI::run() {
             continue;
         }
 
+        // Handle clear modal (it blocks other inputs)
+        if (showing_clear_modal_) {
+            if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
+                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
+                if (handle_clear_modal_click(in.y, in.x)) {
+                    render();
+                    continue;
+                }
+            } else if (key_action && handle_clear_modal_key(static_cast<char32_t>(input))) {
+                render();
+                continue;
+            }
+            // Any other input while modal is open just re-renders
+            render();
+            continue;
+        }
+
         // Handle trust modal (it blocks other inputs)
         if (showing_trust_modal_) {
             if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
@@ -465,6 +482,11 @@ void TerminalUI::render() {
     // Draw identity popup on top if showing
     if (showing_identity_popup_) {
         draw_identity_popup();
+    }
+
+    // Draw clear modal on top if showing
+    if (showing_clear_modal_) {
+        draw_clear_modal();
     }
 
     notcurses_render(nc_);
@@ -1238,11 +1260,8 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
         if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
             active_name = people_rows_[selected_peer_index_].username;
         }
-        {
-            std::lock_guard<std::mutex> lock(chat_mutex_);
-            chats_by_peer_[active_name].clear();
-        }
-        add_debug("Cleared chat history for: " + active_name);
+        // Show confirmation modal instead of directly clearing
+        show_clear_modal(active_name);
     } else {
         add_debug("Unknown command: " + cmd);
     }
@@ -1623,6 +1642,194 @@ bool TerminalUI::handle_identity_popup_key(char32_t ch) {
         case 'o':
         case 'O':
             close_identity_popup();
+            return true;
+    }
+    return false;
+}
+
+void TerminalUI::show_clear_modal(const std::string& peer_name) {
+    if (showing_clear_modal_) {
+        close_clear_modal();
+    }
+    showing_clear_modal_ = true;
+    clear_modal_peer_ = peer_name;
+    clear_modal_selected_button_ = 0;
+    clear_modal_plane_ = nullptr;
+}
+
+void TerminalUI::close_clear_modal() {
+    showing_clear_modal_ = false;
+    clear_modal_peer_.clear();
+    if (clear_modal_plane_) {
+        ncplane_destroy(clear_modal_plane_);
+        clear_modal_plane_ = nullptr;
+    }
+}
+
+void TerminalUI::draw_clear_modal() {
+    if (!showing_clear_modal_ || !nc_) return;
+
+    // Get terminal dimensions
+    unsigned term_rows = 0, term_cols = 0;
+    notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
+
+    // Modal dimensions
+    const int modal_w = 50;
+    const int modal_h = 8;
+    const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
+    const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
+
+    // Create or recreate the modal plane
+    if (!clear_modal_plane_) {
+        clear_modal_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "clear_modal");
+        if (!clear_modal_plane_) return;
+    }
+
+    // Colors
+    const uint64_t border_ch = make_channels(0xff, 0xaa, 0x44, 0x22, 0x12, 0x29);  // Orange border
+    const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x22, 0x12, 0x29);
+    const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
+    const uint64_t warning_ch = make_channels(0xff, 0x44, 0x44, 0x22, 0x12, 0x29);  // Red warning
+    const uint64_t button_selected_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);
+    const uint64_t button_unselected_ch = make_channels(0xe2, 0xe8, 0xf0, 0x44, 0x44, 0x44);
+    const uint32_t bg_color = 0x221229;
+
+    // Clear and fill background
+    ncplane_erase(clear_modal_plane_);
+    uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
+    ncchannels_set_bg_rgb(&ul, bg_color);
+    ncchannels_set_bg_rgb(&ur, bg_color);
+    ncchannels_set_bg_rgb(&ll, bg_color);
+    ncchannels_set_bg_rgb(&lr, bg_color);
+    ncchannels_set_fg_rgb(&ul, bg_color);
+    ncchannels_set_fg_rgb(&ur, bg_color);
+    ncchannels_set_fg_rgb(&ll, bg_color);
+    ncchannels_set_fg_rgb(&lr, bg_color);
+    ncplane_gradient(clear_modal_plane_, 0, 0, modal_h, modal_w, " ", 0, ul, ur, ll, lr);
+
+    // Draw border
+    ncplane_set_channels(clear_modal_plane_, border_ch);
+    ncplane_rounded_box_sized(clear_modal_plane_, 0, border_ch, modal_h, modal_w, 0);
+
+    // Title
+    ncplane_set_channels(clear_modal_plane_, title_ch);
+    ncplane_on_styles(clear_modal_plane_, NCSTYLE_BOLD);
+    ncplane_putstr_yx(clear_modal_plane_, 1, 2, " Clear Chat History ");
+    ncplane_off_styles(clear_modal_plane_, NCSTYLE_BOLD);
+
+    // Warning message
+    ncplane_set_channels(clear_modal_plane_, warning_ch);
+    std::string warn_line = "Clear all messages for " + clear_modal_peer_ + "?";
+    ncplane_putstr_yx(clear_modal_plane_, 3, 4, warn_line.c_str());
+
+    // Note
+    ncplane_set_channels(clear_modal_plane_, text_ch);
+    ncplane_putstr_yx(clear_modal_plane_, 4, 4, "This will also clear from database.");
+
+    // Buttons
+    const int button_y = modal_h - 2;
+    const int accept_x = 12;
+    const int reject_x = 30;
+
+    // Accept button
+    if (clear_modal_selected_button_ == 0) {
+        ncplane_set_channels(clear_modal_plane_, button_selected_ch);
+        ncplane_putstr_yx(clear_modal_plane_, button_y, accept_x, "[ Accept ]");
+    } else {
+        ncplane_set_channels(clear_modal_plane_, button_unselected_ch);
+        ncplane_putstr_yx(clear_modal_plane_, button_y, accept_x, "  Accept  ");
+    }
+
+    // Reject button
+    if (clear_modal_selected_button_ == 1) {
+        ncplane_set_channels(clear_modal_plane_, button_selected_ch);
+        ncplane_putstr_yx(clear_modal_plane_, button_y, reject_x, "[ Reject ]");
+    } else {
+        ncplane_set_channels(clear_modal_plane_, button_unselected_ch);
+        ncplane_putstr_yx(clear_modal_plane_, button_y, reject_x, "  Reject  ");
+    }
+}
+
+bool TerminalUI::handle_clear_modal_click(int abs_y, int abs_x) {
+    if (!showing_clear_modal_ || !clear_modal_plane_) return false;
+
+    int plane_y = 0, plane_x = 0;
+    ncplane_abs_yx(clear_modal_plane_, &plane_y, &plane_x);
+
+    unsigned h = 0, w = 0;
+    ncplane_dim_yx(clear_modal_plane_, &h, &w);
+
+    const int rel_y = abs_y - plane_y;
+    const int rel_x = abs_x - plane_x;
+
+    const int button_y = static_cast<int>(h) - 2;
+    const int accept_x_start = 12;
+    const int accept_x_end = 22;
+    const int reject_x_start = 30;
+    const int reject_x_end = 40;
+
+    if (rel_y == button_y) {
+        if (rel_x >= accept_x_start && rel_x <= accept_x_end) {
+            // Accept - clear from memory and DB
+            {
+                std::lock_guard<std::mutex> lock(chat_mutex_);
+                chats_by_peer_[clear_modal_peer_].clear();
+            }
+            if (db_manager_) {
+                db_manager_->clearMessagesForPeer(clear_modal_peer_);
+            }
+            add_debug("Cleared chat history for: " + clear_modal_peer_);
+            close_clear_modal();
+            return true;
+        } else if (rel_x >= reject_x_start && rel_x <= reject_x_end) {
+            // Reject - just close
+            add_debug("Cancelled clearing chat for: " + clear_modal_peer_);
+            close_clear_modal();
+            return true;
+        }
+    }
+
+    // Click outside closes modal (cancel)
+    if (rel_y < 0 || rel_y >= static_cast<int>(h) || rel_x < 0 || rel_x >= static_cast<int>(w)) {
+        close_clear_modal();
+        return true;
+    }
+
+    return false;
+}
+
+bool TerminalUI::handle_clear_modal_key(char32_t ch) {
+    if (!showing_clear_modal_) return false;
+
+    switch (ch) {
+        case NCKEY_LEFT:
+        case NCKEY_RIGHT:
+            clear_modal_selected_button_ = 1 - clear_modal_selected_button_;  // Toggle 0/1
+            return true;
+        case NCKEY_ENTER:
+        case '\n':
+        case '\r':
+            if (clear_modal_selected_button_ == 0) {
+                // Accept - clear from memory and DB
+                {
+                    std::lock_guard<std::mutex> lock(chat_mutex_);
+                    chats_by_peer_[clear_modal_peer_].clear();
+                }
+                if (db_manager_) {
+                    db_manager_->clearMessagesForPeer(clear_modal_peer_);
+                }
+                add_debug("Cleared chat history for: " + clear_modal_peer_);
+            } else {
+                // Reject
+                add_debug("Cancelled clearing chat for: " + clear_modal_peer_);
+            }
+            close_clear_modal();
+            return true;
+        case 27:  // Escape
+        case 'q':
+        case 'Q':
+            add_debug("Cancelled clearing chat for: " + clear_modal_peer_);
+            close_clear_modal();
             return true;
     }
     return false;
