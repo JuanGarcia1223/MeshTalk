@@ -25,6 +25,20 @@ struct PeerIdentity {
     int64_t first_seen;
 };
 
+struct FileTransferRecord {
+    int64_t id;
+    std::string transfer_id;  // UUID for the transfer
+    std::string filename;
+    uint64_t file_size;
+    std::string sha256_hash;
+    std::string peer_name;
+    bool is_sender;
+    std::string status;  // "pending", "in_progress", "complete", "failed", "cancelled"
+    std::string timestamp;
+    int64_t timestamp_ms;
+    std::string file_data;  // BLOB stored as string for SQLite
+};
+
 class DatabaseManager {
 public:
     DatabaseManager(const std::string& username);
@@ -55,6 +69,20 @@ public:
     UpsertResult upsertPeer(const std::string& username, const std::vector<uint8_t>& public_key);
     bool trustPeer(const std::string& username);
     std::vector<PeerIdentity> getAllKnownPeers();
+
+    // File transfer methods
+    bool saveFileTransfer(const std::string& transfer_id, const std::string& filename,
+                          uint64_t file_size, const std::string& sha256_hash,
+                          const std::string& peer_name, bool is_sender,
+                          const std::string& status, const std::string& timestamp,
+                          int64_t timestamp_ms);
+    bool updateFileTransferStatus(const std::string& transfer_id, const std::string& status);
+    bool saveFileData(const std::string& transfer_id, const std::vector<uint8_t>& data);
+    std::optional<std::vector<uint8_t>> loadFileData(const std::string& transfer_id);
+    std::vector<FileTransferRecord> loadAllFileTransfers();
+    std::vector<FileTransferRecord> loadFileTransfersForPeer(const std::string& peer_name);
+    std::optional<FileTransferRecord> getFileTransfer(const std::string& transfer_id);
+    std::string getFileStoragePath() const;
 
 private:
     std::string getDbPath() const;
