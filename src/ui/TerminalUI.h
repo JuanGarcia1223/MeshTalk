@@ -64,6 +64,10 @@ public:
     // Identity display callback
     void set_on_show_identity(std::function<void()> callback) { on_show_identity_ = callback; }
 
+    // File transfer callbacks
+    void set_on_upload_file(std::function<bool(const std::string&, const std::string&)> callback) { on_upload_file_ = callback; }
+    void set_on_download_file(std::function<bool(const std::string&, const std::string&)> callback) { on_download_file_ = callback; }
+
     // Identity popup
     void show_identity_popup(const std::string& fingerprint);
     void close_identity_popup();
@@ -83,6 +87,20 @@ public:
     void draw_clear_modal();
     bool handle_clear_modal_click(int abs_y, int abs_x);
     bool handle_clear_modal_key(char32_t ch);
+
+    // File transfer UI
+    void show_upload_popup(const std::string& filename, const std::string& target_peer, uint64_t file_size);
+    void close_upload_popup();
+    void draw_upload_popup();
+    bool handle_upload_popup_click(int abs_y, int abs_x);
+    bool handle_upload_popup_key(char32_t ch);
+    void update_upload_progress(uint64_t bytes_sent, bool complete);
+
+    void show_download_popup();
+    void close_download_popup();
+    void draw_download_popup();
+    bool handle_download_popup_click(int abs_y, int abs_x);
+    bool handle_download_popup_key(char32_t ch);
 
     void add_debug(const std::string& line);
 
@@ -185,10 +203,27 @@ private:
     int clear_modal_selected_button_{0};  // 0 = Accept, 1 = Reject
     ncplane* clear_modal_plane_{nullptr};
 
+    // File upload popup state
+    bool showing_upload_popup_{false};
+    std::string upload_filename_;
+    std::string upload_target_peer_;
+    uint64_t upload_file_size_{0};
+    uint64_t upload_bytes_sent_{0};
+    bool upload_complete_{false};
+    bool upload_cancelled_{false};
+    ncplane* upload_popup_plane_{nullptr};
+
+    // File download popup state
+    bool showing_download_popup_{false};
+    int download_selected_index_{0};
+    ncplane* download_popup_plane_{nullptr};
+
     std::unique_ptr<DatabaseManager> db_manager_;
     std::function<void(const std::string&)> on_peer_offline_;
     std::function<void(const std::string&)> on_trust_peer_;
     std::function<void()> on_show_identity_;
+    std::function<bool(const std::string&, const std::string&)> on_upload_file_;
+    std::function<bool(const std::string&, const std::string&)> on_download_file_;
 
     std::thread timeout_checker_thread_;
     void run_timeout_checker();
@@ -207,7 +242,9 @@ private:
         {"/HI", "Send hello message"},
         {"/BYE", "Send goodbye message"},
         {"/STATUS", "Show peer status"},
-        {"/CLEAR", "Clear chat history"}
+        {"/CLEAR", "Clear chat history"},
+        {"/UPLOAD", "Upload a file"},
+        {"/DOWNLOAD", "Download received files"}
     };
 
     std::mutex chat_mutex_;
