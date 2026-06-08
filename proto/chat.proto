@@ -8,3 +8,39 @@ message ChatMessage {
   int64 timestamp_ms = 5;
   string iso_datetime = 6;
 }
+
+// File Transfer Protocol messages
+message FileOffer {
+  string transfer_id = 1;
+  string filename = 2;
+  uint64 file_size = 3;
+  string sha256_hash = 4;
+}
+
+message FileResponse {
+  string transfer_id = 1;
+  bool accepted = 2;
+}
+
+message FileChunk {
+  string transfer_id = 1;
+  uint32 chunk_index = 2;
+  bytes data = 3;
+  bool is_last = 4;
+}
+
+message FileComplete {
+  string transfer_id = 1;
+  string sha256_hash = 2;
+}
+
+message FileRecord {
+  string transfer_id = 1;
+  string filename = 2;
+  uint64 file_size = 3;
+  string sha256_hash = 4;
+  string from_user = 5;
+  string to_user = 6;
+  int64 timestamp_ms = 7;
+  string iso_datetime = 8;
+}
