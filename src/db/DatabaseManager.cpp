@@ -111,6 +111,40 @@ bool DatabaseManager::createSchema() {
             CREATE INDEX IF NOT EXISTS idx_known_peers_status ON known_peers(trust_status);
         )");
 
+        // File transfers table
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS file_transfers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transfer_id TEXT UNIQUE NOT NULL,
+                filename TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                sha256_hash TEXT,
+                peer_name TEXT NOT NULL,
+                is_sender INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'complete', 'failed', 'cancelled')),
+                timestamp TEXT NOT NULL,
+                timestamp_ms INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        )");
+
+        db_->exec(R"(
+            CREATE INDEX IF NOT EXISTS idx_file_transfers_peer ON file_transfers(peer_name);
+        )");
+
+        db_->exec(R"(
+            CREATE INDEX IF NOT EXISTS idx_file_transfers_timestamp ON file_transfers(timestamp_ms);
+        )");
+
+        // File data table (stores actual file content)
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS file_data (
+                transfer_id TEXT PRIMARY KEY,
+                data BLOB NOT NULL,
+                FOREIGN KEY (transfer_id) REFERENCES file_transfers(transfer_id) ON DELETE CASCADE
+            );
+        )");
+
         return true;
     } catch (const std::exception& ex) {
         std::cerr << "db: failed to create schema: " << ex.what() << "\n";
@@ -435,4 +469,217 @@ std::vector<PeerIdentity> DatabaseManager::getAllKnownPeers() {
     }
 
     return peers;
+}
+
+std::string DatabaseManager::getFileStoragePath() const {
+    const char* home = std::getenv("HOME");
+    if (!home) {
+        home = "/tmp";
+    }
+    return std::string(home) + "/.local/share/meshtalk/files/";
+}
+
+bool DatabaseManager::saveFileTransfer(const std::string& transfer_id, const std::string& filename,
+                                       uint64_t file_size, const std::string& sha256_hash,
+                                       const std::string& peer_name, bool is_sender,
+                                       const std::string& status, const std::string& timestamp,
+                                       int64_t timestamp_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT OR REPLACE INTO file_transfers (transfer_id, filename, file_size, sha256_hash, "
+            "peer_name, is_sender, status, timestamp, timestamp_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        insert.bind(1, transfer_id);
+        insert.bind(2, filename);
+        insert.bind(3, static_cast<int64_t>(file_size));
+        insert.bind(4, sha256_hash);
+        insert.bind(5, peer_name);
+        insert.bind(6, is_sender ? 1 : 0);
+        insert.bind(7, status);
+        insert.bind(8, timestamp);
+        insert.bind(9, timestamp_ms);
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to save file transfer: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::updateFileTransferStatus(const std::string& transfer_id, const std::string& status) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement update(*db_,
+            "UPDATE file_transfers SET status = ? WHERE transfer_id = ?");
+        update.bind(1, status);
+        update.bind(2, transfer_id);
+        update.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to update file transfer status: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::saveFileData(const std::string& transfer_id, const std::vector<uint8_t>& data) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT OR REPLACE INTO file_data (transfer_id, data) VALUES (?, ?)");
+        insert.bind(1, transfer_id);
+        insert.bind(2, data.data(), static_cast<int>(data.size()));
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to save file data: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+std::optional<std::vector<uint8_t>> DatabaseManager::loadFileData(const std::string& transfer_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return std::nullopt;
+    }
+
+    try {
+        SQLite::Statement query(*db_, "SELECT data FROM file_data WHERE transfer_id = ?");
+        query.bind(1, transfer_id);
+
+        if (query.executeStep()) {
+            const void* data = query.getColumn(0).getBlob();
+            int size = query.getColumn(0).getBytes();
+            std::vector<uint8_t> result(size);
+            std::memcpy(result.data(), data, size);
+            return result;
+        }
+        return std::nullopt;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to load file data: " << ex.what() << "\n";
+        return std::nullopt;
+    }
+}
+
+std::vector<FileTransferRecord> DatabaseManager::loadAllFileTransfers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<FileTransferRecord> records;
+
+    if (!db_) {
+        return records;
+    }
+
+    try {
+        SQLite::Statement query(*db_,
+            "SELECT id, transfer_id, filename, file_size, sha256_hash, peer_name, "
+            "is_sender, status, timestamp, timestamp_ms FROM file_transfers "
+            "ORDER BY timestamp_ms DESC");
+
+        while (query.executeStep()) {
+            FileTransferRecord record;
+            record.id = query.getColumn(0).getInt64();
+            record.transfer_id = query.getColumn(1).getString();
+            record.filename = query.getColumn(2).getString();
+            record.file_size = static_cast<uint64_t>(query.getColumn(3).getInt64());
+            record.sha256_hash = query.getColumn(4).getString();
+            record.peer_name = query.getColumn(5).getString();
+            record.is_sender = query.getColumn(6).getInt() != 0;
+            record.status = query.getColumn(7).getString();
+            record.timestamp = query.getColumn(8).getString();
+            record.timestamp_ms = query.getColumn(9).getInt64();
+            records.push_back(record);
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to load file transfers: " << ex.what() << "\n";
+    }
+
+    return records;
+}
+
+std::vector<FileTransferRecord> DatabaseManager::loadFileTransfersForPeer(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<FileTransferRecord> records;
+
+    if (!db_) {
+        return records;
+    }
+
+    try {
+        SQLite::Statement query(*db_,
+            "SELECT id, transfer_id, filename, file_size, sha256_hash, peer_name, "
+            "is_sender, status, timestamp, timestamp_ms FROM file_transfers "
+            "WHERE peer_name = ? ORDER BY timestamp_ms DESC");
+        query.bind(1, peer_name);
+
+        while (query.executeStep()) {
+            FileTransferRecord record;
+            record.id = query.getColumn(0).getInt64();
+            record.transfer_id = query.getColumn(1).getString();
+            record.filename = query.getColumn(2).getString();
+            record.file_size = static_cast<uint64_t>(query.getColumn(3).getInt64());
+            record.sha256_hash = query.getColumn(4).getString();
+            record.peer_name = query.getColumn(5).getString();
+            record.is_sender = query.getColumn(6).getInt() != 0;
+            record.status = query.getColumn(7).getString();
+            record.timestamp = query.getColumn(8).getString();
+            record.timestamp_ms = query.getColumn(9).getInt64();
+            records.push_back(record);
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to load file transfers for peer: " << ex.what() << "\n";
+    }
+
+    return records;
+}
+
+std::optional<FileTransferRecord> DatabaseManager::getFileTransfer(const std::string& transfer_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return std::nullopt;
+    }
+
+    try {
+        SQLite::Statement query(*db_,
+            "SELECT id, transfer_id, filename, file_size, sha256_hash, peer_name, "
+            "is_sender, status, timestamp, timestamp_ms FROM file_transfers "
+            "WHERE transfer_id = ?");
+        query.bind(1, transfer_id);
+
+        if (query.executeStep()) {
+            FileTransferRecord record;
+            record.id = query.getColumn(0).getInt64();
+            record.transfer_id = query.getColumn(1).getString();
+            record.filename = query.getColumn(2).getString();
+            record.file_size = static_cast<uint64_t>(query.getColumn(3).getInt64());
+            record.sha256_hash = query.getColumn(4).getString();
+            record.peer_name = query.getColumn(5).getString();
+            record.is_sender = query.getColumn(6).getInt() != 0;
+            record.status = query.getColumn(7).getString();
+            record.timestamp = query.getColumn(8).getString();
+            record.timestamp_ms = query.getColumn(9).getInt64();
+            return record;
+        }
+        return std::nullopt;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to get file transfer: " << ex.what() << "\n";
+        return std::nullopt;
+    }
 }
