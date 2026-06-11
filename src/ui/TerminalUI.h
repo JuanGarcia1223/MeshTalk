@@ -17,6 +17,9 @@
 
 #include "db/DatabaseManager.h"
 
+// Forward declaration for file transfer records
+struct FileTransferRecord;
+
 class TerminalUI {
 public:
     struct PeerInfo {
@@ -101,6 +104,14 @@ public:
     void draw_download_popup();
     bool handle_download_popup_click(int abs_y, int abs_x);
     bool handle_download_popup_key(char32_t ch);
+
+    // Attachment display
+    void add_attachment_message(const std::string& peer_name, bool sender,
+                                const std::string& filename, uint64_t file_size,
+                                const std::string& datetime, int64_t timestamp_ms);
+
+    // Utility
+    static std::string local_datetime_now();
 
     void add_debug(const std::string& line);
 

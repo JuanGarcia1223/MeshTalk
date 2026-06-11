@@ -1,5 +1,6 @@
 #include "ui/TerminalUI.h"
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -34,17 +35,7 @@ std::vector<std::string> wrap_text(const std::string& text, int width) {
     }
     return out;
 }
-
-std::string local_datetime_now() {
-    using namespace std::chrono;
-    const auto now = system_clock::now();
-    const std::time_t tt = system_clock::to_time_t(now);
-    std::tm tm{};
-    localtime_r(&tt, &tm);
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y-%m-%d %H:%M");
-    return oss.str();
-}
+}  // namespace
 
 int64_t unix_epoch_ms_now() {
     using namespace std::chrono;
@@ -53,7 +44,7 @@ int64_t unix_epoch_ms_now() {
 
 std::string normalize_datetime_display(const std::string& input) {
     if (input.empty()) {
-        return local_datetime_now();
+        return TerminalUI::local_datetime_now();
     }
 
     std::string out = input;
@@ -68,7 +59,17 @@ std::string normalize_datetime_display(const std::string& input) {
     }
     return out;
 }
-}  // namespace
+
+std::string TerminalUI::local_datetime_now() {
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const std::time_t tt = system_clock::to_time_t(now);
+    std::tm tm{};
+    localtime_r(&tt, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M");
+    return oss.str();
+}
 
 TerminalUI::TerminalUI(bool debug_mode, std::string self_name,
                        std::function<void(const PeerInfo&)> on_peer_activate,
@@ -253,6 +254,40 @@ void TerminalUI::run() {
                 continue;
             }
             // Any other input while modal is open just re-renders
+            render();
+            continue;
+        }
+
+        // Handle upload popup (it blocks other inputs)
+        if (showing_upload_popup_) {
+            if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
+                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
+                if (handle_upload_popup_click(in.y, in.x)) {
+                    render();
+                    continue;
+                }
+            } else if (key_action && handle_upload_popup_key(static_cast<char32_t>(input))) {
+                render();
+                continue;
+            }
+            // Any other input while popup is open just re-renders
+            render();
+            continue;
+        }
+
+        // Handle download popup (it blocks other inputs)
+        if (showing_download_popup_) {
+            if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
+                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
+                if (handle_download_popup_click(in.y, in.x)) {
+                    render();
+                    continue;
+                }
+            } else if (key_action && handle_download_popup_key(static_cast<char32_t>(input))) {
+                render();
+                continue;
+            }
+            // Any other input while popup is open just re-renders
             render();
             continue;
         }
@@ -453,6 +488,24 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
     }
 }
 
+void TerminalUI::add_attachment_message(const std::string& peer_name, bool sender,
+                                        const std::string& filename, uint64_t file_size,
+                                        const std::string& datetime, int64_t timestamp_ms) {
+    if (peer_name.empty() || filename.empty()) {
+        return;
+    }
+
+    // Format attachment message with paperclip emoji
+    std::string content = "📎 Attachment: " + filename + " (" + std::to_string(file_size / 1024) + " KB)";
+
+    std::lock_guard<std::mutex> lock(chat_mutex_);
+    auto& thread = chats_by_peer_[peer_name];
+    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime)});
+    if (thread.size() > 2000) {
+        thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
+    }
+}
+
 void TerminalUI::render() {
     if (!nc_) {
         return;
@@ -491,6 +544,16 @@ void TerminalUI::render() {
     // Draw clear modal on top if showing
     if (showing_clear_modal_) {
         draw_clear_modal();
+    }
+
+    // Draw upload popup on top if showing
+    if (showing_upload_popup_) {
+        draw_upload_popup();
+    }
+
+    // Draw download popup on top if showing
+    if (showing_download_popup_) {
+        draw_download_popup();
     }
 
     notcurses_render(nc_);
@@ -933,6 +996,7 @@ void TerminalUI::draw_chat() {
     const uint64_t base_text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
     const uint64_t sender_ch = make_channels(0x86, 0xef, 0xac, 0x0f, 0x17, 0x2a);
     const uint64_t receiver_ch = make_channels(0x93, 0xc5, 0xfd, 0x0f, 0x17, 0x2a);
+    const uint64_t attachment_ch = make_channels(0xf5, 0xd0, 0x9e, 0x0f, 0x17, 0x2a);  // Amber/gold for attachments
     const uint64_t dt_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
     const uint64_t input_border_ch = make_channels(0xc4, 0xb5, 0xfd, 0x0f, 0x17, 0x2a);
     const uint64_t offline_ch = make_channels(0x94, 0xa3, 0xb8, 0x0f, 0x17, 0x2a);
@@ -1071,7 +1135,16 @@ void TerminalUI::draw_chat() {
     int y = chat_top;
     for (int i = start; i < static_cast<int>(visual.size()) && y <= chat_bottom; ++i, ++y) {
         const VisualLine& vl = visual[i];
-        ncplane_set_channels(chat_plane_, vl.sender ? sender_ch : receiver_ch);
+        
+        // Check if this is an attachment message (contains 📎)
+        bool is_attachment = (vl.left.find("📎") != std::string::npos);
+        
+        // Use attachment color for attachment messages, otherwise sender/receiver color
+        if (is_attachment) {
+            ncplane_set_channels(chat_plane_, attachment_ch);
+        } else {
+            ncplane_set_channels(chat_plane_, vl.sender ? sender_ch : receiver_ch);
+        }
 
         int max_left = content_w;
         if (!vl.right.empty()) {
@@ -1278,6 +1351,54 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
         }
         // Show confirmation modal instead of directly clearing
         show_clear_modal(active_name);
+    } else if (cmd == "/UPLOAD") {
+        if (args.empty()) {
+            add_debug("Usage: /UPLOAD <filepath>");
+            return;
+        }
+        if (selected_peer_index_ < 0 || selected_peer_index_ >= static_cast<int>(people_rows_.size())) {
+            add_debug("No peer selected for file upload");
+            return;
+        }
+        const PeerInfo peer = people_rows_[selected_peer_index_];
+        if (peer.username == "self") {
+            add_debug("Cannot upload file to self");
+            return;
+        }
+        if (!is_selected_peer_online()) {
+            add_debug("Peer is offline, cannot upload file");
+            return;
+        }
+        if (!is_selected_peer_trusted()) {
+            add_debug("Peer is not trusted, cannot upload file");
+            return;
+        }
+        
+        // Get file size for the popup
+        struct stat st;
+        if (stat(args.c_str(), &st) != 0) {
+            add_debug("Cannot access file: " + args);
+            return;
+        }
+        
+        // Show upload popup
+        show_upload_popup(args, peer.username, static_cast<uint64_t>(st.st_size));
+        
+        // Trigger file upload via callback
+        if (on_upload_file_) {
+            if (on_upload_file_(args, peer.username)) {
+                add_debug("Started uploading " + args + " to " + peer.username);
+            } else {
+                add_debug("Failed to start upload");
+                close_upload_popup();
+            }
+        } else {
+            add_debug("Upload not implemented");
+            close_upload_popup();
+        }
+    } else if (cmd == "/DOWNLOAD") {
+        // Show download popup with file list
+        show_download_popup();
     } else {
         add_debug("Unknown command: " + cmd);
     }
@@ -2131,6 +2252,201 @@ bool TerminalUI::start_stdio_capture() {
     stdout_thread_ = std::thread(&TerminalUI::capture_loop, this, stdout_pipe_read_, "stdout");
     stderr_thread_ = std::thread(&TerminalUI::capture_loop, this, stderr_pipe_read_, "stderr");
     return true;
+}
+
+void TerminalUI::show_download_popup() {
+    if (showing_download_popup_) {
+        close_download_popup();
+    }
+    showing_download_popup_ = true;
+    download_selected_index_ = 0;
+    download_popup_plane_ = nullptr;
+}
+
+void TerminalUI::close_download_popup() {
+    showing_download_popup_ = false;
+    download_selected_index_ = 0;
+    if (download_popup_plane_) {
+        ncplane_destroy(download_popup_plane_);
+        download_popup_plane_ = nullptr;
+    }
+}
+
+void TerminalUI::draw_download_popup() {
+    if (!showing_download_popup_ || !nc_) return;
+
+    unsigned rows = 0, cols = 0;
+    notcurses_stddim_yx(nc_, &rows, &cols);
+
+    const int modal_w = std::min(70, static_cast<int>(cols) - 4);
+    const int modal_h = std::min(20, static_cast<int>(rows) - 4);
+    const int modal_y = (static_cast<int>(rows) - modal_h) / 2;
+    const int modal_x = (static_cast<int>(cols) - modal_w) / 2;
+
+    if (!download_popup_plane_) {
+        download_popup_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "download_popup");
+        if (!download_popup_plane_) return;
+    }
+
+    // Colors
+    const uint64_t border_ch = make_channels(0x44, 0xff, 0xaa, 0x0f, 0x17, 0x2a);
+    const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x0f, 0x17, 0x2a);
+    const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x0f, 0x17, 0x2a);
+    const uint64_t dim_ch = make_channels(0x80, 0x80, 0x80, 0x0f, 0x17, 0x2a);
+    const uint64_t selected_ch = make_channels(0x00, 0x00, 0x00, 0x44, 0xc5, 0x5e);
+    const uint32_t bg_color = 0x0f172a;
+
+    ncplane_erase(download_popup_plane_);
+    uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
+    ncchannels_set_bg_rgb(&ul, bg_color);
+    ncchannels_set_bg_rgb(&ur, bg_color);
+    ncchannels_set_bg_rgb(&ll, bg_color);
+    ncchannels_set_bg_rgb(&lr, bg_color);
+    ncchannels_set_fg_rgb(&ul, bg_color);
+    ncchannels_set_fg_rgb(&ur, bg_color);
+    ncchannels_set_fg_rgb(&ll, bg_color);
+    ncchannels_set_fg_rgb(&lr, bg_color);
+    ncplane_gradient(download_popup_plane_, 0, 0, modal_h, modal_w, " ", 0, ul, ur, ll, lr);
+
+    ncplane_set_channels(download_popup_plane_, border_ch);
+    ncplane_rounded_box_sized(download_popup_plane_, 0, border_ch, modal_h, modal_w, 0);
+
+    ncplane_set_channels(download_popup_plane_, title_ch);
+    ncplane_on_styles(download_popup_plane_, NCSTYLE_BOLD);
+    ncplane_putstr_yx(download_popup_plane_, 1, 2, " File Transfers - Select to Download ");
+    ncplane_off_styles(download_popup_plane_, NCSTYLE_BOLD);
+
+    // Load file transfers from database
+    std::vector<FileTransferRecord> files;
+    if (db_manager_) {
+        files = db_manager_->loadAllFileTransfers();
+    }
+
+    if (files.empty()) {
+        ncplane_set_channels(download_popup_plane_, dim_ch);
+        ncplane_putstr_yx(download_popup_plane_, modal_h / 2, (modal_w - 25) / 2, "No file transfers available");
+    } else {
+        const int list_start_y = 3;
+        const int max_visible = modal_h - 5;
+        
+        // Adjust selection if needed
+        if (download_selected_index_ >= static_cast<int>(files.size())) {
+            download_selected_index_ = static_cast<int>(files.size()) - 1;
+        }
+        if (download_selected_index_ < 0) {
+            download_selected_index_ = 0;
+        }
+
+        // Calculate scroll offset
+        int scroll_offset = 0;
+        if (download_selected_index_ >= max_visible) {
+            scroll_offset = download_selected_index_ - max_visible + 1;
+        }
+
+        for (int i = 0; i < max_visible && (i + scroll_offset) < static_cast<int>(files.size()); ++i) {
+            const auto& file = files[i + scroll_offset];
+            int y = list_start_y + i;
+            
+            bool is_selected = (i + scroll_offset) == download_selected_index_;
+            
+            std::string direction = file.is_sender ? "→ " : "← ";
+            std::string line = direction + file.filename + " (" + std::to_string(file.file_size / 1024) + " KB)";
+            
+            // Truncate if too long
+            if (static_cast<int>(line.size()) > modal_w - 8) {
+                line = line.substr(0, modal_w - 11) + "...";
+            }
+            
+            if (is_selected) {
+                ncplane_set_channels(download_popup_plane_, selected_ch);
+            } else {
+                ncplane_set_channels(download_popup_plane_, text_ch);
+            }
+            
+            // Pad with spaces to fill width
+            while (static_cast<int>(line.size()) < modal_w - 6) {
+                line += " ";
+            }
+            
+            ncplane_putstr_yx(download_popup_plane_, y, 3, line.c_str());
+        }
+    }
+
+    // Instructions
+    ncplane_set_channels(download_popup_plane_, dim_ch);
+    ncplane_putstr_yx(download_popup_plane_, modal_h - 2, 4, "↑/↓: Select  Enter: Download  Esc: Close");
+}
+
+bool TerminalUI::handle_download_popup_click(int abs_y, int abs_x) {
+    if (!showing_download_popup_ || !download_popup_plane_) return false;
+
+    int plane_y = 0, plane_x = 0;
+    ncplane_abs_yx(download_popup_plane_, &plane_y, &plane_x);
+
+    unsigned h = 0, w = 0;
+    ncplane_dim_yx(download_popup_plane_, &h, &w);
+
+    const int rel_y = abs_y - plane_y;
+    const int rel_x = abs_x - plane_x;
+
+    // Click outside closes popup
+    if (rel_y < 0 || rel_y >= static_cast<int>(h) || rel_x < 0 || rel_x >= static_cast<int>(w)) {
+        close_download_popup();
+        return true;
+    }
+
+    return false;
+}
+
+bool TerminalUI::handle_download_popup_key(char32_t ch) {
+    if (!showing_download_popup_) return false;
+
+    std::vector<FileTransferRecord> files;
+    if (db_manager_) {
+        files = db_manager_->loadAllFileTransfers();
+    }
+
+    switch (ch) {
+        case NCKEY_UP:
+            if (download_selected_index_ > 0) {
+                download_selected_index_--;
+            }
+            return true;
+        case NCKEY_DOWN:
+            if (download_selected_index_ < static_cast<int>(files.size()) - 1) {
+                download_selected_index_++;
+            }
+            return true;
+        case NCKEY_ENTER:
+        case '\n':
+        case '\r':
+            if (download_selected_index_ >= 0 && download_selected_index_ < static_cast<int>(files.size())) {
+                const auto& file = files[download_selected_index_];
+                if (on_download_file_) {
+                    // Create downloads directory if needed
+                    const char* home = getenv("HOME");
+                    std::string download_dir = home ? std::string(home) + "/downloads" : "/tmp/downloads";
+                    struct stat st;
+                    if (stat(download_dir.c_str(), &st) != 0) {
+                        mkdir(download_dir.c_str(), 0755);
+                    }
+                    
+                    std::string download_path = download_dir + "/" + file.filename;
+                    if (on_download_file_(file.transfer_id, download_path)) {
+                        add_debug("Downloaded " + file.filename + " to " + download_path);
+                    } else {
+                        add_debug("Failed to download " + file.filename);
+                    }
+                }
+            }
+            return true;
+        case 27:  // Escape
+        case 'q':
+        case 'Q':
+            close_download_popup();
+            return true;
+    }
+    return false;
 }
 
 void TerminalUI::stop_stdio_capture() {
