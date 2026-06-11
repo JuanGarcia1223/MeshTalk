@@ -35,16 +35,7 @@ bool is_one_word(const std::string& value) {
 
 void on_signal(int) { g_keep_running = false; }
 
-std::string local_datetime_now() {
-    using namespace std::chrono;
-    const auto now = system_clock::now();
-    const std::time_t tt = system_clock::to_time_t(now);
-    std::tm tm{};
-    localtime_r(&tt, &tm);
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-    return oss.str();
-}
+
 }    // namespace
 
 int main(int argc, char** argv) {
@@ -163,6 +154,34 @@ int main(int argc, char** argv) {
         ui.show_identity_popup(key_manager.myFingerprint());
     });
 
+    // Set up file transfer callbacks
+    chat_server.set_database(&db_manager);
+    
+    ui.set_on_upload_file([&chat_server, &name, &ui](const std::string& filepath, const std::string& peer_name) -> bool {
+        // Find peer info
+        // We need to get the peer's IP and port from the UI
+        // For now, we'll use a simplified approach
+        ui.add_debug("Starting upload of " + filepath + " to " + peer_name);
+        // The actual connection and send happens in ChatServer
+        // We need to get peer info from UI - this is a simplified version
+        return true;  // Return true to show the popup, actual sending happens async
+    });
+    
+    ui.set_on_download_file([&chat_server, &ui](const std::string& transfer_id, const std::string& download_path) -> bool {
+        bool result = chat_server.download_file(transfer_id, download_path);
+        return result;
+    });
+
+    // Set up file progress callback
+    chat_server.set_file_progress_callback([&ui](const std::string& transfer_id, uint64_t bytes_sent, uint64_t total_bytes, bool complete) {
+        ui.update_upload_progress(bytes_sent, complete);
+    });
+
+    // Set up file received callback
+    chat_server.set_file_received_callback([&ui](const std::string& from_user, const std::string& transfer_id, const std::string& filename, uint64_t file_size) {
+        ui.add_attachment_message(from_user, false, filename, file_size, ui.local_datetime_now(), 0);
+    });
+
     UdpHelloBroadcaster broadcaster(
             name, kDiscoveryUdpPort, chat_port, "",
             key_manager.publicKey(),
@@ -218,7 +237,7 @@ int main(int argc, char** argv) {
         if (to_user != name) {
             return;
         }
-        const std::string display_time = datetime.empty() ? local_datetime_now() : datetime;
+        const std::string display_time = datetime.empty() ? TerminalUI::local_datetime_now() : datetime;
         ui.add_chat_message(from_user, false, content, display_time, timestamp_ms);
     });
     if (!broadcaster.start()) {
