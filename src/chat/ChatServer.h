@@ -3,14 +3,55 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
+
+// Forward declaration for database
+class DatabaseManager;
+
+enum class FileTransferStatus {
+    PENDING,
+    IN_PROGRESS,
+    COMPLETE,
+    FAILED,
+    CANCELLED
+};
+
+struct OutgoingFileTransfer {
+    std::string transfer_id;
+    std::string filename;
+    uint64_t file_size;
+    std::string sha256_hash;
+    std::string peer_name;
+    std::string ip;
+    uint16_t port;
+    std::vector<uint8_t> file_data;
+    FileTransferStatus status;
+    uint64_t bytes_sent;
+    bool cancelled;
+};
+
+struct IncomingFileTransfer {
+    std::string transfer_id;
+    std::string filename;
+    uint64_t file_size;
+    std::string sha256_hash;
+    std::string from_user;
+    std::vector<uint8_t> chunks;
+    uint32_t expected_chunks;
+    uint32_t received_chunks;
+    FileTransferStatus status;
+    int64_t timestamp_ms;
+    std::string iso_datetime;
+};
 
 class ChatServer {
 public:
-    ChatServer() = default;
+    ChatServer();
     ~ChatServer();
 
     ChatServer(const ChatServer&) = delete;
@@ -28,10 +69,29 @@ public:
 
     uint16_t port() const { return port_; }
 
+    // File transfer methods
+    void set_database(DatabaseManager* db);
+    void set_file_progress_callback(std::function<void(const std::string&, uint64_t, uint64_t, bool)> callback);
+    void set_file_received_callback(std::function<void(const std::string&, const std::string&, const std::string&, uint64_t)> callback);
+    
+    bool send_file_offer(const std::string& from_user, const std::string& to_user,
+                         const std::string& ip, uint16_t port, const std::string& filepath);
+    void cancel_file_transfer(const std::string& transfer_id);
+    bool download_file(const std::string& transfer_id, const std::string& download_path);
+
 private:
     void accept_loop();
     void handle_inbound_connection(int fd, const std::string& peer_ip, uint16_t peer_port);
     static std::string endpoint_key(const std::string& ip, uint16_t port);
+
+    // File transfer helpers
+    void send_file_chunks(const std::string& transfer_id);
+    void handle_file_offer(const std::string& from_user, const std::string& ip, uint16_t port, const class FileOffer& offer);
+    void handle_file_chunk(const std::string& from_user, const class FileChunk& chunk);
+    void handle_file_complete(const std::string& from_user, const class FileComplete& complete);
+    void send_file_response(const std::string& to_user, const std::string& ip, uint16_t port, 
+                            const std::string& transfer_id, bool accepted);
+    std::string compute_sha256(const std::vector<uint8_t>& data);
 
     int listen_fd_{-1};
     uint16_t port_{0};
@@ -45,4 +105,12 @@ private:
     std::mutex receive_handler_mutex_;
     std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)>
         on_receive_;
+
+    // File transfer state
+    DatabaseManager* db_{nullptr};
+    std::mutex file_transfers_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<OutgoingFileTransfer>> outgoing_transfers_;
+    std::unordered_map<std::string, std::shared_ptr<IncomingFileTransfer>> incoming_transfers_;
+    std::function<void(const std::string&, uint64_t, uint64_t, bool)> file_progress_callback_;
+    std::function<void(const std::string&, const std::string&, const std::string&, uint64_t)> file_received_callback_;
 };
