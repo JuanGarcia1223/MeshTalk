@@ -68,7 +68,7 @@ public:
     void set_on_show_identity(std::function<void()> callback) { on_show_identity_ = callback; }
 
     // File transfer callbacks
-    void set_on_upload_file(std::function<bool(const std::string&, const std::string&)> callback) { on_upload_file_ = callback; }
+    void set_on_upload_file(std::function<bool(const std::string&, const std::string&, const std::string&, uint16_t)> callback) { on_upload_file_ = callback; }
     void set_on_download_file(std::function<bool(const std::string&, const std::string&)> callback) { on_download_file_ = callback; }
 
     // Identity popup
@@ -233,7 +233,7 @@ private:
     std::function<void(const std::string&)> on_peer_offline_;
     std::function<void(const std::string&)> on_trust_peer_;
     std::function<void()> on_show_identity_;
-    std::function<bool(const std::string&, const std::string&)> on_upload_file_;
+    std::function<bool(const std::string&, const std::string&, const std::string&, uint16_t)> on_upload_file_;
     std::function<bool(const std::string&, const std::string&)> on_download_file_;
 
     std::thread timeout_checker_thread_;
