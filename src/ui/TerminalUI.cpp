@@ -1386,7 +1386,7 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
         
         // Trigger file upload via callback
         if (on_upload_file_) {
-            if (on_upload_file_(args, peer.username)) {
+            if (on_upload_file_(args, peer.username, peer.ip, peer.tcp_port)) {
                 add_debug("Started uploading " + args + " to " + peer.username);
             } else {
                 add_debug("Failed to start upload");

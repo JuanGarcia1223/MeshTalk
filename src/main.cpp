@@ -157,14 +157,14 @@ int main(int argc, char** argv) {
     // Set up file transfer callbacks
     chat_server.set_database(&db_manager);
     
-    ui.set_on_upload_file([&chat_server, &name, &ui](const std::string& filepath, const std::string& peer_name) -> bool {
-        // Find peer info
-        // We need to get the peer's IP and port from the UI
-        // For now, we'll use a simplified approach
-        ui.add_debug("Starting upload of " + filepath + " to " + peer_name);
-        // The actual connection and send happens in ChatServer
-        // We need to get peer info from UI - this is a simplified version
-        return true;  // Return true to show the popup, actual sending happens async
+    ui.set_on_upload_file([&chat_server, &name, &ui](const std::string& filepath, const std::string& peer_name,
+                                                      const std::string& peer_ip, uint16_t peer_port) -> bool {
+        ui.add_debug("Starting upload of " + filepath + " to " + peer_name + " at " + peer_ip + ":" + std::to_string(peer_port));
+        bool result = chat_server.send_file_offer(name, peer_name, peer_ip, peer_port, filepath);
+        if (!result) {
+            ui.add_debug("Failed to start upload to " + peer_name);
+        }
+        return result;
     });
     
     ui.set_on_download_file([&chat_server, &ui](const std::string& transfer_id, const std::string& download_path) -> bool {
