@@ -25,6 +25,12 @@ set(BUILD_TESTING OFF CACHE BOOL "Disable tests" FORCE)
 
 FetchContent_MakeAvailable(notcurses)
 
+# Get notcurses include directories
+if(NOT notcurses_SOURCE_DIR)
+  set(notcurses_SOURCE_DIR "${FETCHCONTENT_BASE_DIR}/notcurses-src")
+  set(notcurses_BINARY_DIR "${FETCHCONTENT_BASE_DIR}/notcurses-build")
+endif()
+
 # Pull SQLiteCpp and build it as a subproject.
 FetchContent_Declare(
   SQLiteCpp
@@ -59,6 +65,8 @@ target_include_directories(meshtalk_demo PRIVATE
   src
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Protobuf_INCLUDE_DIRS}
+  ${notcurses_SOURCE_DIR}/include
+  ${notcurses_BINARY_DIR}/include
 )
 
 # Notcurses target names can vary; support common exported names.
