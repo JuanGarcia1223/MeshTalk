@@ -90,7 +90,7 @@ void ChatServer::set_file_progress_callback(
 }
 
 void ChatServer::set_file_received_callback(
-    std::function<void(const std::string&, const std::string&, const std::string&, uint64_t)> callback) {
+    std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)> callback) {
     file_received_callback_ = std::move(callback);
 }
 
@@ -152,6 +152,7 @@ bool ChatServer::send_file_offer(const std::string& from_user, const std::string
     transfer->filename = filename;
     transfer->file_size = static_cast<uint64_t>(size);
     transfer->sha256_hash = compute_sha256(buffer);
+    transfer->from_user = from_user;
     transfer->peer_name = to_user;
     transfer->ip = ip;
     transfer->port = port;
@@ -170,6 +171,8 @@ bool ChatServer::send_file_offer(const std::string& from_user, const std::string
         db_->saveFileTransfer(transfer->transfer_id, filename, transfer->file_size,
                               transfer->sha256_hash, to_user, true, "pending",
                               iso_utc_now(), unix_epoch_ms());
+        // Keep local copy so sent files can also be downloaded later.
+        db_->saveFileData(transfer->transfer_id, transfer->file_data);
     }
 
     // Ensure connection
@@ -227,6 +230,8 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
     offer.set_filename(transfer->filename);
     offer.set_file_size(transfer->file_size);
     offer.set_sha256_hash(transfer->sha256_hash);
+    offer.set_from_user(transfer->from_user);
+    offer.set_to_user(transfer->peer_name);
 
     std::string offer_payload;
     if (!offer.SerializeToString(&offer_payload)) {
@@ -324,6 +329,11 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
 
     if (file_progress_callback_) {
         file_progress_callback_(transfer_id, transfer->file_size, transfer->file_size, true);
+    }
+
+    if (file_received_callback_) {
+        file_received_callback_(transfer->peer_name, true, transfer_id, transfer->filename,
+                                transfer->file_size);
     }
 
     std::cout << "chat: file transfer " << transfer_id << " complete\n";
@@ -642,26 +652,35 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
             break;
         }
 
+        std::string from_user = "unknown";
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            auto it = name_by_ip_.find(peer_ip);
+            if (it != name_by_ip_.end()) {
+                from_user = it->second;
+            }
+        }
+
         // Check for message type prefix
         if (payload.substr(0, 11) == "FILE_OFFER:") {
             std::string data = payload.substr(11);
             FileOffer offer;
             if (offer.ParseFromString(data)) {
-                handle_file_offer("", peer_ip, peer_port, offer);
+                handle_file_offer(from_user, peer_ip, peer_port, offer);
             }
             continue;
-        } else if (payload.substr(0, 12) == "FILE_CHUNK:") {
-            std::string data = payload.substr(12);
+        } else if (payload.substr(0, 11) == "FILE_CHUNK:") {
+            std::string data = payload.substr(11);
             FileChunk chunk;
             if (chunk.ParseFromString(data)) {
-                handle_file_chunk("", chunk);
+                handle_file_chunk(from_user, chunk);
             }
             continue;
         } else if (payload.substr(0, 14) == "FILE_COMPLETE:") {
             std::string data = payload.substr(14);
             FileComplete complete;
             if (complete.ParseFromString(data)) {
-                handle_file_complete("", complete);
+                handle_file_complete(from_user, complete);
             }
             continue;
         }
@@ -696,16 +715,18 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
 
 void ChatServer::handle_file_offer(const std::string& from_user, const std::string& ip, 
                                    uint16_t port, const FileOffer& offer) {
+    const std::string resolved_from_user =
+        offer.from_user().empty() ? from_user : offer.from_user();
     std::cout << "chat: received file offer " << offer.transfer_id() 
               << " for " << offer.filename() 
-              << " (" << offer.file_size() << " bytes) from " << from_user << "\n";
+              << " (" << offer.file_size() << " bytes) from " << resolved_from_user << "\n";
 
     auto transfer = std::make_shared<IncomingFileTransfer>();
     transfer->transfer_id = offer.transfer_id();
     transfer->filename = offer.filename();
     transfer->file_size = offer.file_size();
     transfer->sha256_hash = offer.sha256_hash();
-    transfer->from_user = from_user;
+    transfer->from_user = resolved_from_user;
     transfer->chunks.reserve(offer.file_size());
     transfer->expected_chunks = static_cast<uint32_t>((offer.file_size() + 32767) / 32768);
     transfer->received_chunks = 0;
@@ -721,14 +742,11 @@ void ChatServer::handle_file_offer(const std::string& from_user, const std::stri
     // Save to database
     if (db_) {
         db_->saveFileTransfer(offer.transfer_id(), offer.filename(), offer.file_size(),
-                              offer.sha256_hash(), from_user, false, "in_progress",
+                              offer.sha256_hash(), resolved_from_user, false, "in_progress",
                               transfer->iso_datetime, transfer->timestamp_ms);
     }
 
-    // Notify UI that a file is being received
-    if (file_received_callback_) {
-        file_received_callback_(from_user, offer.transfer_id(), offer.filename(), offer.file_size());
-    }
+    // Notify UI only after complete file is received (in handle_file_chunk).
 }
 
 void ChatServer::handle_file_chunk(const std::string& from_user, const FileChunk& chunk) {
@@ -765,7 +783,7 @@ void ChatServer::handle_file_chunk(const std::string& from_user, const FileChunk
 
             // Notify UI
             if (file_received_callback_) {
-                file_received_callback_(transfer->from_user, chunk.transfer_id(), 
+                file_received_callback_(transfer->from_user, false, chunk.transfer_id(),
                                         transfer->filename, transfer->file_size);
             }
         } else {
