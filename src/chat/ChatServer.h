@@ -26,6 +26,7 @@ struct OutgoingFileTransfer {
     std::string filename;
     uint64_t file_size;
     std::string sha256_hash;
+    std::string from_user;
     std::string peer_name;
     std::string ip;
     uint16_t port;
@@ -72,7 +73,8 @@ public:
     // File transfer methods
     void set_database(DatabaseManager* db);
     void set_file_progress_callback(std::function<void(const std::string&, uint64_t, uint64_t, bool)> callback);
-    void set_file_received_callback(std::function<void(const std::string&, const std::string&, const std::string&, uint64_t)> callback);
+    void set_file_received_callback(
+        std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)> callback);
     
     bool send_file_offer(const std::string& from_user, const std::string& to_user,
                          const std::string& ip, uint16_t port, const std::string& filepath);
@@ -112,5 +114,6 @@ private:
     std::unordered_map<std::string, std::shared_ptr<OutgoingFileTransfer>> outgoing_transfers_;
     std::unordered_map<std::string, std::shared_ptr<IncomingFileTransfer>> incoming_transfers_;
     std::function<void(const std::string&, uint64_t, uint64_t, bool)> file_progress_callback_;
-    std::function<void(const std::string&, const std::string&, const std::string&, uint64_t)> file_received_callback_;
+    std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)>
+        file_received_callback_;
 };
