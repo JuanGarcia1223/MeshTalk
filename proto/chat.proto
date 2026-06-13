@@ -15,6 +15,8 @@ message FileOffer {
   string filename = 2;
   uint64 file_size = 3;
   string sha256_hash = 4;
+  string from_user = 5;
+  string to_user = 6;
 }
 
 message FileResponse {
