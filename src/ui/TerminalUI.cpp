@@ -498,6 +498,18 @@ void TerminalUI::add_attachment_message(const std::string& peer_name, bool sende
     // Format attachment message with paperclip emoji
     std::string content = "📎 Attachment: " + filename + " (" + std::to_string(file_size / 1024) + " KB)";
 
+    // Check if peer is trusted before saving to database
+    bool is_trusted = false;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        is_trusted = (peer_name == "self") || (trusted_peers_.count(peer_name) > 0);
+    }
+
+    // Only save to database for trusted peers
+    if (db_manager_ && is_trusted) {
+        db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms);
+    }
+
     std::lock_guard<std::mutex> lock(chat_mutex_);
     auto& thread = chats_by_peer_[peer_name];
     thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime)});
@@ -2319,7 +2331,11 @@ void TerminalUI::draw_download_popup() {
     // Load file transfers from database
     std::vector<FileTransferRecord> files;
     if (db_manager_) {
-        files = db_manager_->loadAllFileTransfers();
+        for (const auto& rec : db_manager_->loadAllFileTransfers()) {
+            if (rec.status == "complete") {
+                files.push_back(rec);
+            }
+        }
     }
 
     if (files.empty()) {
@@ -2350,7 +2366,8 @@ void TerminalUI::draw_download_popup() {
             bool is_selected = (i + scroll_offset) == download_selected_index_;
             
             std::string direction = file.is_sender ? "→ " : "← ";
-            std::string line = direction + file.filename + " (" + std::to_string(file.file_size / 1024) + " KB)";
+            std::string when = normalize_datetime_display(file.timestamp);
+            std::string line = direction + file.filename + " (" + std::to_string(file.file_size / 1024) + " KB) " + when;
             
             // Truncate if too long
             if (static_cast<int>(line.size()) > modal_w - 8) {
@@ -2403,7 +2420,11 @@ bool TerminalUI::handle_download_popup_key(char32_t ch) {
 
     std::vector<FileTransferRecord> files;
     if (db_manager_) {
-        files = db_manager_->loadAllFileTransfers();
+        for (const auto& rec : db_manager_->loadAllFileTransfers()) {
+            if (rec.status == "complete") {
+                files.push_back(rec);
+            }
+        }
     }
 
     switch (ch) {
