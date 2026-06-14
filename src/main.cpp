@@ -178,8 +178,14 @@ int main(int argc, char** argv) {
     });
 
     // Set up file received callback
-    chat_server.set_file_received_callback([&ui](const std::string& from_user, const std::string& transfer_id, const std::string& filename, uint64_t file_size) {
-        ui.add_attachment_message(from_user, false, filename, file_size, ui.local_datetime_now(), 0);
+    chat_server.set_file_received_callback([&ui](const std::string& peer_name, bool is_sender,
+                                                 const std::string& transfer_id, const std::string& filename,
+                                                 uint64_t file_size) {
+        if (peer_name.empty() || peer_name == "unknown") {
+            ui.add_debug("file callback: invalid peer for transfer " + transfer_id + " filename=" + filename);
+            return;
+        }
+        ui.add_attachment_message(peer_name, is_sender, filename, file_size, ui.local_datetime_now(), 0);
     });
 
     UdpHelloBroadcaster broadcaster(
