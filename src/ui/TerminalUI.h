@@ -112,6 +112,7 @@ public:
 
     // Utility
     static std::string local_datetime_now();
+    static int64_t unix_epoch_ms_now();
 
     void add_debug(const std::string& line);
 

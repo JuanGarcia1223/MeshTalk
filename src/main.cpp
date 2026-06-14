@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
             ui.add_debug("file callback: invalid peer for transfer " + transfer_id + " filename=" + filename);
             return;
         }
-        ui.add_attachment_message(peer_name, is_sender, filename, file_size, ui.local_datetime_now(), 0);
+        ui.add_attachment_message(peer_name, is_sender, filename, file_size, ui.local_datetime_now(), ui.unix_epoch_ms_now());
     });
 
     UdpHelloBroadcaster broadcaster(

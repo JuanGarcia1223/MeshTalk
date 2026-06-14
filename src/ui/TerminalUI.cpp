@@ -37,7 +37,7 @@ std::vector<std::string> wrap_text(const std::string& text, int width) {
 }
 }  // namespace
 
-int64_t unix_epoch_ms_now() {
+int64_t TerminalUI::TerminalUI::unix_epoch_ms_now() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
@@ -340,10 +340,10 @@ void TerminalUI::run() {
                     const PeerInfo peer = people_rows_[selected_peer_index_];
 
                     if (peer.username == "self") {
-                        add_chat_message("self", true, text, local_datetime_now(), unix_epoch_ms_now());
+                        add_chat_message("self", true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
                     } else if (on_send_chat_) {
                         if (on_send_chat_(peer, text)) {
-                            add_chat_message(peer.username, true, text, local_datetime_now(), unix_epoch_ms_now());
+                            add_chat_message(peer.username, true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
                         }
                     }
                 }
@@ -1328,10 +1328,10 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
         if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
             const PeerInfo peer = people_rows_[selected_peer_index_];
             if (peer.username == "self") {
-                add_chat_message("self", true, msg, local_datetime_now(), unix_epoch_ms_now());
+                add_chat_message("self", true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
             } else if (on_send_chat_ && is_selected_peer_online()) {
                 if (on_send_chat_(peer, msg)) {
-                    add_chat_message(peer.username, true, msg, local_datetime_now(), unix_epoch_ms_now());
+                    add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
                 }
             }
         }
@@ -1340,10 +1340,10 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
         if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
             const PeerInfo peer = people_rows_[selected_peer_index_];
             if (peer.username == "self") {
-                add_chat_message("self", true, msg, local_datetime_now(), unix_epoch_ms_now());
+                add_chat_message("self", true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
             } else if (on_send_chat_ && is_selected_peer_online()) {
                 if (on_send_chat_(peer, msg)) {
-                    add_chat_message(peer.username, true, msg, local_datetime_now(), unix_epoch_ms_now());
+                    add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
                 }
             }
         }
