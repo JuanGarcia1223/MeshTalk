@@ -589,7 +589,7 @@ std::vector<FileTransferRecord> DatabaseManager::loadAllFileTransfers() {
         SQLite::Statement query(*db_,
             "SELECT id, transfer_id, filename, file_size, sha256_hash, peer_name, "
             "is_sender, status, timestamp, timestamp_ms FROM file_transfers "
-            "ORDER BY timestamp_ms DESC");
+            "ORDER BY timestamp_ms ASC");
 
         while (query.executeStep()) {
             FileTransferRecord record;
@@ -625,7 +625,7 @@ std::vector<FileTransferRecord> DatabaseManager::loadFileTransfersForPeer(const 
         SQLite::Statement query(*db_,
             "SELECT id, transfer_id, filename, file_size, sha256_hash, peer_name, "
             "is_sender, status, timestamp, timestamp_ms FROM file_transfers "
-            "WHERE peer_name = ? ORDER BY timestamp_ms DESC");
+            "WHERE peer_name = ? ORDER BY timestamp_ms ASC");
         query.bind(1, peer_name);
 
         while (query.executeStep()) {
