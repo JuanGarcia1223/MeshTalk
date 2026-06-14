@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Protobuf REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED libsodium)
 
 include(FetchContent)
 
@@ -67,6 +69,7 @@ target_include_directories(meshtalk_demo PRIVATE
   ${Protobuf_INCLUDE_DIRS}
   ${notcurses_SOURCE_DIR}/include
   ${notcurses_BINARY_DIR}/include
+  ${SODIUM_INCLUDE_DIRS}
 )
 
 # Notcurses target names can vary; support common exported names.
@@ -83,6 +86,7 @@ endif()
 target_link_libraries(meshtalk_demo PRIVATE
   ${Protobuf_LIBRARIES}
   SQLiteCpp
+  ${SODIUM_LIBRARIES}
 )
 
 add_custom_target(run
