@@ -51,6 +51,7 @@ FetchContent_MakeAvailable(SQLiteCpp)
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
   proto/discovery.proto
   proto/chat.proto
+  proto/envelope.proto
 )
 
 add_executable(meshtalk_demo

@@ -1,6 +1,7 @@
 #include "chat/ChatServer.h"
 
 #include "chat.pb.h"
+#include "envelope.pb.h"
 #include "db/DatabaseManager.h"
 
 #include <arpa/inet.h>
@@ -22,6 +23,23 @@ bool send_all(int fd, const void* data, size_t len);
 bool recv_all(int fd, void* data, size_t len);
 int64_t unix_epoch_ms();
 std::string iso_utc_now();
+
+bool send_envelope(int fd, const Envelope& env) {
+    std::string payload;
+    if (!env.SerializeToString(&payload)) return false;
+    uint32_t len_be = htonl(static_cast<uint32_t>(payload.size()));
+    return send_all(fd, &len_be, sizeof(len_be)) && send_all(fd, payload.data(), payload.size());
+}
+
+bool recv_envelope(int fd, Envelope& env) {
+    uint32_t len_be = 0;
+    if (!recv_all(fd, &len_be, sizeof(len_be))) return false;
+    uint32_t len = ntohl(len_be);
+    if (len == 0 || len > 32 * 1024 * 1024) return false;
+    std::string payload(len, '\0');
+    if (!recv_all(fd, payload.data(), len)) return false;
+    return env.ParseFromString(payload);
+}
 
 bool send_all(int fd, const void* data, size_t len) {
     const char* p = static_cast<const char*>(data);
@@ -211,42 +229,31 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
         transfer = it->second;
     }
 
-    const std::string key = endpoint_key(transfer->ip, transfer->port);
-    int fd = -1;
+    int fd = get_outbound_fd(transfer->ip, transfer->port);
+    if (fd < 0) {
+        std::cerr << "chat: no connection for file transfer " << transfer_id << "\n";
+        transfer->status = FileTransferStatus::FAILED;
+        return;
+    }
+
+    // Send file offer envelope
     {
-        std::lock_guard<std::mutex> lock(outbound_mutex_);
-        auto it = outbound_fd_by_endpoint_.find(key);
-        if (it == outbound_fd_by_endpoint_.end()) {
-            std::cerr << "chat: no connection for file transfer " << transfer_id << "\n";
+        FileOffer offer;
+        offer.set_transfer_id(transfer->transfer_id);
+        offer.set_filename(transfer->filename);
+        offer.set_file_size(transfer->file_size);
+        offer.set_sha256_hash(transfer->sha256_hash);
+        offer.set_from_user(transfer->from_user);
+        offer.set_to_user(transfer->peer_name);
+
+        Envelope env;
+        env.set_type(Envelope::FILE_OFFER);
+        *env.mutable_file_offer() = std::move(offer);
+        if (!send_envelope(fd, env)) {
+            std::cerr << "chat: failed to send file offer\n";
             transfer->status = FileTransferStatus::FAILED;
             return;
         }
-        fd = it->second;
-    }
-
-    // Send file offer message first
-    FileOffer offer;
-    offer.set_transfer_id(transfer->transfer_id);
-    offer.set_filename(transfer->filename);
-    offer.set_file_size(transfer->file_size);
-    offer.set_sha256_hash(transfer->sha256_hash);
-    offer.set_from_user(transfer->from_user);
-    offer.set_to_user(transfer->peer_name);
-
-    std::string offer_payload;
-    if (!offer.SerializeToString(&offer_payload)) {
-        std::cerr << "chat: failed to serialize file offer\n";
-        transfer->status = FileTransferStatus::FAILED;
-        return;
-    }
-
-    // Send offer with type prefix
-    std::string msg_with_type = "FILE_OFFER:" + offer_payload;
-    uint32_t len_be = htonl(static_cast<uint32_t>(msg_with_type.size()));
-    if (!send_all(fd, &len_be, sizeof(len_be)) || !send_all(fd, msg_with_type.data(), msg_with_type.size())) {
-        std::cerr << "chat: failed to send file offer\n";
-        transfer->status = FileTransferStatus::FAILED;
-        return;
     }
 
     // Wait a bit for response (simplified - should wait for FileResponse)
@@ -269,20 +276,10 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
         chunk.set_data(transfer->file_data.data() + offset, chunk_size);
         chunk.set_is_last(offset + chunk_size >= transfer->file_data.size());
 
-        std::string chunk_payload;
-        if (!chunk.SerializeToString(&chunk_payload)) {
-            std::cerr << "chat: failed to serialize file chunk\n";
-            transfer->status = FileTransferStatus::FAILED;
-            if (db_) {
-                db_->updateFileTransferStatus(transfer_id, "failed");
-            }
-            return;
-        }
-
-        // Send with type prefix
-        std::string chunk_with_type = "FILE_CHUNK:" + chunk_payload;
-        len_be = htonl(static_cast<uint32_t>(chunk_with_type.size()));
-        if (!send_all(fd, &len_be, sizeof(len_be)) || !send_all(fd, chunk_with_type.data(), chunk_with_type.size())) {
+        Envelope env;
+        env.set_type(Envelope::FILE_CHUNK);
+        *env.mutable_file_chunk() = std::move(chunk);
+        if (!send_envelope(fd, env)) {
             std::cerr << "chat: failed to send file chunk\n";
             transfer->status = FileTransferStatus::FAILED;
             if (db_) {
@@ -309,17 +306,16 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
         return;
     }
 
-    // Send complete message
-    FileComplete complete;
-    complete.set_transfer_id(transfer_id);
-    complete.set_sha256_hash(transfer->sha256_hash);
+    // Send complete envelope
+    {
+        FileComplete complete;
+        complete.set_transfer_id(transfer_id);
+        complete.set_sha256_hash(transfer->sha256_hash);
 
-    std::string complete_payload;
-    if (complete.SerializeToString(&complete_payload)) {
-        std::string complete_with_type = "FILE_COMPLETE:" + complete_payload;
-        len_be = htonl(static_cast<uint32_t>(complete_with_type.size()));
-        send_all(fd, &len_be, sizeof(len_be));
-        send_all(fd, complete_with_type.data(), complete_with_type.size());
+        Envelope env;
+        env.set_type(Envelope::FILE_COMPLETE);
+        *env.mutable_file_complete() = std::move(complete);
+        send_envelope(fd, env);
     }
 
     transfer->status = FileTransferStatus::COMPLETE;
@@ -370,6 +366,36 @@ bool ChatServer::download_file(const std::string& transfer_id, const std::string
 
 std::string ChatServer::endpoint_key(const std::string& ip, uint16_t port) {
     return ip + ":" + std::to_string(port);
+}
+
+std::string ChatServer::resolve_peer_name(const std::string& peer_ip) {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    auto it = name_by_ip_.find(peer_ip);
+    return (it != name_by_ip_.end()) ? it->second : "unknown";
+}
+
+int ChatServer::get_outbound_fd(const std::string& ip, uint16_t port) {
+    const std::string key = endpoint_key(ip, port);
+    std::lock_guard<std::mutex> lock(outbound_mutex_);
+    auto it = outbound_fd_by_endpoint_.find(key);
+    return (it != outbound_fd_by_endpoint_.end()) ? it->second : -1;
+}
+
+void ChatServer::handle_chat_message(const std::string& from_user, const ChatMessage& msg) {
+    std::cout << "chat: recv from=" << msg.from_user()
+              << " to=" << msg.to_user()
+              << " msg_id=" << msg.msg_id()
+              << " ts=" << msg.iso_datetime()
+              << " content=\"" << msg.content() << "\"\n";
+
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)> cb;
+    {
+        std::lock_guard<std::mutex> lock(receive_handler_mutex_);
+        cb = on_receive_;
+    }
+    if (cb) {
+        cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms());
+    }
 }
 
 bool ChatServer::start() {
@@ -510,27 +536,18 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
     msg.set_timestamp_ms(unix_epoch_ms());
     msg.set_iso_datetime(iso_utc_now());
 
-    std::string payload;
-    if (!msg.SerializeToString(&payload)) {
-        std::cerr << "chat: failed to serialize chat message\n";
+    Envelope env;
+    env.set_type(Envelope::CHAT);
+    *env.mutable_chat() = std::move(msg);
+
+    int fd = get_outbound_fd(ip, port);
+    if (fd < 0) {
         return false;
     }
 
-    const uint32_t len_be = htonl(static_cast<uint32_t>(payload.size()));
-    const std::string key = endpoint_key(ip, port);
-
-    int fd = -1;
-    {
-        std::lock_guard<std::mutex> lock(outbound_mutex_);
-        auto it = outbound_fd_by_endpoint_.find(key);
-        if (it == outbound_fd_by_endpoint_.end()) {
-            return false;
-        }
-        fd = it->second;
-    }
-
-    if (!send_all(fd, &len_be, sizeof(len_be)) || !send_all(fd, payload.data(), payload.size())) {
-        std::cerr << "chat: send failed to " << to_user << " (" << key << ")\n";
+    if (!send_envelope(fd, env)) {
+        std::cerr << "chat: send failed to " << to_user << "\n";
+        const std::string key = endpoint_key(ip, port);
         std::lock_guard<std::mutex> lock(outbound_mutex_);
         auto it = outbound_fd_by_endpoint_.find(key);
         if (it != outbound_fd_by_endpoint_.end()) {
@@ -540,8 +557,8 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
         return false;
     }
 
-    std::cout << "chat: sent msg_id=" << msg.msg_id() << " to=" << to_user
-              << " at " << ip << ":" << port << " ts=" << msg.iso_datetime() << "\n";
+    std::cout << "chat: sent msg_id=" << env.chat().msg_id() << " to=" << to_user
+              << " at " << ip << ":" << port << " ts=" << env.chat().iso_datetime() << "\n";
     return true;
 }
 
@@ -637,76 +654,29 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &no_timeout, sizeof(no_timeout));
 
     while (running_) {
-        uint32_t len_be = 0;
-        if (!recv_all(fd, &len_be, sizeof(len_be))) {
-            break;
-        }
-        const uint32_t len = ntohl(len_be);
-        if (len == 0 || len > 16 * 1024 * 1024) {  // Increased to 16MB for file chunks
-            std::cerr << "chat: invalid inbound payload length " << len << "\n";
+        Envelope env;
+        if (!recv_envelope(fd, env)) {
             break;
         }
 
-        std::string payload(len, '\0');
-        if (!recv_all(fd, payload.data(), len)) {
-            break;
-        }
+        const std::string from_user = resolve_peer_name(peer_ip);
 
-        std::string from_user = "unknown";
-        {
-            std::lock_guard<std::mutex> lock(peers_mutex_);
-            auto it = name_by_ip_.find(peer_ip);
-            if (it != name_by_ip_.end()) {
-                from_user = it->second;
-            }
-        }
-
-        // Check for message type prefix
-        if (payload.substr(0, 11) == "FILE_OFFER:") {
-            std::string data = payload.substr(11);
-            FileOffer offer;
-            if (offer.ParseFromString(data)) {
-                handle_file_offer(from_user, peer_ip, peer_port, offer);
-            }
-            continue;
-        } else if (payload.substr(0, 11) == "FILE_CHUNK:") {
-            std::string data = payload.substr(11);
-            FileChunk chunk;
-            if (chunk.ParseFromString(data)) {
-                handle_file_chunk(from_user, chunk);
-            }
-            continue;
-        } else if (payload.substr(0, 14) == "FILE_COMPLETE:") {
-            std::string data = payload.substr(14);
-            FileComplete complete;
-            if (complete.ParseFromString(data)) {
-                handle_file_complete(from_user, complete);
-            }
-            continue;
-        }
-
-        // Regular chat message
-        ChatMessage msg;
-        if (!msg.ParseFromArray(payload.data(), static_cast<int>(payload.size()))) {
-            std::cerr << "chat: failed to parse inbound chat payload from "
-                      << peer_ip << ":" << peer_port << "\n";
-            continue;
-        }
-
-        std::cout << "chat: recv from=" << msg.from_user()
-                  << " to=" << msg.to_user()
-                  << " msg_id=" << msg.msg_id()
-                  << " ts=" << msg.iso_datetime()
-                  << " content=\"" << msg.content() << "\"\n";
-
-        std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)>
-            cb;
-        {
-            std::lock_guard<std::mutex> lock(receive_handler_mutex_);
-            cb = on_receive_;
-        }
-        if (cb) {
-            cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms());
+        switch (env.type()) {
+            case Envelope::CHAT:
+                handle_chat_message(from_user, env.chat());
+                break;
+            case Envelope::FILE_OFFER:
+                handle_file_offer(from_user, peer_ip, peer_port, env.file_offer());
+                break;
+            case Envelope::FILE_CHUNK:
+                handle_file_chunk(from_user, env.file_chunk());
+                break;
+            case Envelope::FILE_COMPLETE:
+                handle_file_complete(from_user, env.file_complete());
+                break;
+            default:
+                std::cerr << "chat: unknown envelope type " << env.type() << "\n";
+                break;
         }
     }
 
