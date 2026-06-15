@@ -6,10 +6,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Protobuf REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(SODIUM REQUIRED libsodium)
 
 include(FetchContent)
+
+# Pull libsodium directly from upstream.
+FetchContent_Declare(
+  libsodium
+  GIT_REPOSITORY https://github.com/jedisct1/libsodium.git
+  GIT_TAG stable
+  GIT_SHALLOW TRUE
+)
+set(SODIUM_DISABLE_TESTS ON CACHE BOOL "Disable libsodium tests" FORCE)
+FetchContent_MakeAvailable(libsodium)
 
 # Pull notcurses directly from upstream.
 FetchContent_Declare(
@@ -44,10 +52,6 @@ set(SQLITECPP_BUILD_TESTS OFF CACHE BOOL "Disable SQLiteCpp tests" FORCE)
 set(SQLITECPP_BUILD_EXAMPLES OFF CACHE BOOL "Disable SQLiteCpp examples" FORCE)
 FetchContent_MakeAvailable(SQLiteCpp)
 
-# libsodium is optional for now - using mock crypto implementation
-# find_library(LIBSODIUM_LIBRARY sodium)
-# find_path(LIBSODIUM_INCLUDE_DIR sodium.h)
-
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
   proto/discovery.proto
   proto/chat.proto
@@ -70,7 +74,6 @@ target_include_directories(meshtalk_demo PRIVATE
   ${Protobuf_INCLUDE_DIRS}
   ${notcurses_SOURCE_DIR}/include
   ${notcurses_BINARY_DIR}/include
-  ${SODIUM_INCLUDE_DIRS}
 )
 
 # Notcurses target names can vary; support common exported names.
@@ -87,7 +90,7 @@ endif()
 target_link_libraries(meshtalk_demo PRIVATE
   ${Protobuf_LIBRARIES}
   SQLiteCpp
-  ${SODIUM_LIBRARIES}
+  sodium
 )
 
 add_custom_target(run
