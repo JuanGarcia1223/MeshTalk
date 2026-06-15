@@ -8,8 +8,8 @@
 
 class KeyManager {
 public:
-    static constexpr size_t PUBLIC_KEY_SIZE = 32;
-    static constexpr size_t PRIVATE_KEY_SIZE = 64;
+    static constexpr size_t PUBLIC_KEY_SIZE = 32;   // libsodium crypto_sign_PUBLICKEYBYTES
+    static constexpr size_t PRIVATE_KEY_SIZE = 64;  // libsodium crypto_sign_SECRETKEYBYTES
 
     explicit KeyManager(DatabaseManager& db);
     ~KeyManager() = default;
