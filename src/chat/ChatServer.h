@@ -86,6 +86,9 @@ private:
     void accept_loop();
     void handle_inbound_connection(int fd, const std::string& peer_ip, uint16_t peer_port);
     static std::string endpoint_key(const std::string& ip, uint16_t port);
+    std::string resolve_peer_name(const std::string& peer_ip);
+    int get_outbound_fd(const std::string& ip, uint16_t port);
+    void handle_chat_message(const std::string& from_user, const class ChatMessage& msg);
 
     // File transfer helpers
     void send_file_chunks(const std::string& transfer_id);
