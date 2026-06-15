@@ -5,35 +5,30 @@
 #include <random>
 #include <sstream>
 
+#include <sodium.h>
+
 KeyManager::KeyManager(DatabaseManager& db) : db_(db) {}
 
 bool KeyManager::init() {
+    if (sodium_init() < 0) {
+        std::cerr << "crypto: libsodium initialization failed\n";
+        return false;
+    }
     return loadOrCreateKeys();
 }
 
 bool KeyManager::generateKeypair() {
-    // Generate random keys (mock implementation - replace with libsodium later)
-    public_key_.resize(PUBLIC_KEY_SIZE);
-    private_key_.resize(PRIVATE_KEY_SIZE);
+    public_key_.resize(crypto_sign_PUBLICKEYBYTES);
+    private_key_.resize(crypto_sign_SECRETKEYBYTES);
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(0, 255);
+    crypto_sign_keypair(public_key_.data(), private_key_.data());
 
-    for (size_t i = 0; i < PUBLIC_KEY_SIZE; ++i) {
-        public_key_[i] = static_cast<uint8_t>(dis(gen));
-    }
-    for (size_t i = 0; i < PRIVATE_KEY_SIZE; ++i) {
-        private_key_[i] = static_cast<uint8_t>(dis(gen));
-    }
-
-    // Save to database
     if (!db_.saveIdentity(public_key_, private_key_)) {
         std::cerr << "crypto: failed to save identity to database\n";
         return false;
     }
 
-    std::cout << "crypto: generated new keypair, fingerprint: " << myFingerprint() << "\n";
+    std::cout << "crypto: generated Ed25519 keypair, fingerprint: " << myFingerprint() << "\n";
     return true;
 }
 
