@@ -75,6 +75,7 @@ public:
     void set_file_progress_callback(std::function<void(const std::string&, uint64_t, uint64_t, bool)> callback);
     void set_file_received_callback(
         std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)> callback);
+    void set_trust_checker(std::function<bool(const std::string&)> fn) { is_peer_trusted_ = std::move(fn); }
     
     bool send_file_offer(const std::string& from_user, const std::string& to_user,
                          const std::string& ip, uint16_t port, const std::string& filepath);
@@ -116,4 +117,5 @@ private:
     std::function<void(const std::string&, uint64_t, uint64_t, bool)> file_progress_callback_;
     std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)>
         file_received_callback_;
+    std::function<bool(const std::string&)> is_peer_trusted_;
 };

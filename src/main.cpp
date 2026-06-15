@@ -156,6 +156,10 @@ int main(int argc, char** argv) {
 
     // Set up file transfer callbacks
     chat_server.set_database(&db_manager);
+    chat_server.set_trust_checker([&db_manager](const std::string& peer_name) -> bool {
+        auto peer = db_manager.lookupPeer(peer_name);
+        return peer.has_value() && peer->trust_status == "trusted";
+    });
     
     ui.set_on_upload_file([&chat_server, &name, &ui](const std::string& filepath, const std::string& peer_name,
                                                       const std::string& peer_ip, uint16_t peer_port) -> bool {
