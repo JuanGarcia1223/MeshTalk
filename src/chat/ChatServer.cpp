@@ -717,6 +717,12 @@ void ChatServer::handle_file_offer(const std::string& from_user, const std::stri
                                    uint16_t port, const FileOffer& offer) {
     const std::string resolved_from_user =
         offer.from_user().empty() ? from_user : offer.from_user();
+
+    if (is_peer_trusted_ && !is_peer_trusted_(resolved_from_user)) {
+        std::cerr << "chat: rejecting file offer from untrusted peer " << resolved_from_user << "\n";
+        return;
+    }
+
     std::cout << "chat: received file offer " << offer.transfer_id() 
               << " for " << offer.filename() 
               << " (" << offer.file_size() << " bytes) from " << resolved_from_user << "\n";
