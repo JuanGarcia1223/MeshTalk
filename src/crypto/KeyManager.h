@@ -23,6 +23,8 @@ public:
     // Getters
     const std::vector<uint8_t>& publicKey() const { return public_key_; }
     const std::vector<uint8_t>& privateKey() const { return private_key_; }
+    const std::vector<uint8_t>& x25519PublicKey() const { return x25519_public_key_; }
+    const std::vector<uint8_t>& x25519SecretKey() const { return x25519_secret_key_; }
 
     // Format public key as fingerprint (first 16 bytes as 4 groups of 4 hex chars)
     static std::string fingerprint(const std::vector<uint8_t>& public_key);
@@ -34,8 +36,11 @@ public:
 private:
     bool generateKeypair();
     bool loadOrCreateKeys();
+    bool deriveX25519Keys();
 
     DatabaseManager& db_;
     std::vector<uint8_t> public_key_;
     std::vector<uint8_t> private_key_;
+    std::vector<uint8_t> x25519_public_key_;
+    std::vector<uint8_t> x25519_secret_key_;
 };
