@@ -2,21 +2,29 @@ syntax = "proto3";
 
 import "chat.proto";
 
+message HandshakePayload {
+  bytes ed25519_pk = 1;  // sender's long-term identity public key (32 bytes)
+  bytes x25519_pk  = 2;  // sender's ephemeral X25519 public key (32 bytes)
+  bytes signature  = 3;  // Ed25519 sig of x25519_pk using ed25519_sk (64 bytes)
+}
+
 message Envelope {
   enum Type {
     CHAT          = 0;
     FILE_OFFER    = 1;
     FILE_CHUNK    = 2;
     FILE_COMPLETE = 3;
+    HANDSHAKE     = 4;
   }
 
   Type type = 1;
 
   oneof payload {
-    ChatMessage  chat          = 2;
-    FileOffer    file_offer    = 3;
-    FileChunk    file_chunk    = 4;
-    FileComplete file_complete = 5;
+    ChatMessage      chat          = 2;
+    FileOffer        file_offer    = 3;
+    FileChunk        file_chunk    = 4;
+    FileComplete     file_complete = 5;
+    HandshakePayload handshake     = 6;
   }
 
   // v2 E2E fields — leave empty for now
