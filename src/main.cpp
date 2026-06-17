@@ -1,5 +1,6 @@
 #include "chat/ChatServer.h"
 #include "crypto/KeyManager.h"
+#include "crypto/SessionManager.h"
 #include "discovery/UdpHelloBroadcaster.h"
 #include "ui/TerminalUI.h"
 
@@ -142,6 +143,10 @@ int main(int argc, char** argv) {
         chat_server.stop();
         return 1;
     }
+
+    // Initialize session manager for E2E encryption
+    SessionManager session_manager(key_manager, db_manager);
+    chat_server.set_session_manager(&session_manager);
 
     // Set up callbacks after all objects are initialized
     ui.set_on_trust_callback([&db_manager, &ui](const std::string& peer_name) {
