@@ -89,6 +89,7 @@ private:
     void handle_inbound_connection(int fd, const std::string& peer_ip, uint16_t peer_port);
     static std::string endpoint_key(const std::string& ip, uint16_t port);
     std::string resolve_peer_name(const std::string& peer_ip);
+    std::string session_key_for_ip(const std::string& peer_ip);
     int get_outbound_fd(const std::string& ip, uint16_t port);
     void handle_chat_message(const std::string& from_user, const class ChatMessage& msg);
 
@@ -124,4 +125,6 @@ private:
         file_received_callback_;
     std::function<bool(const std::string&)> is_peer_trusted_;
     SessionManager* session_manager_{nullptr};
+    std::mutex session_keys_mutex_;
+    std::unordered_map<std::string, std::string> ip_to_session_key_;
 };
