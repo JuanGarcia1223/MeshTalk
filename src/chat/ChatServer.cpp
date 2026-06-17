@@ -385,7 +385,13 @@ std::string ChatServer::endpoint_key(const std::string& ip, uint16_t port) {
 std::string ChatServer::resolve_peer_name(const std::string& peer_ip) {
     std::lock_guard<std::mutex> lock(peers_mutex_);
     auto it = name_by_ip_.find(peer_ip);
-    return (it != name_by_ip_.end()) ? it->second : "unknown";
+    return (it != name_by_ip_.end()) ? it->second : peer_ip;
+}
+
+std::string ChatServer::session_key_for_ip(const std::string& peer_ip) {
+    std::lock_guard<std::mutex> lock(session_keys_mutex_);
+    auto it = ip_to_session_key_.find(peer_ip);
+    return (it != ip_to_session_key_.end()) ? it->second : resolve_peer_name(peer_ip);
 }
 
 int ChatServer::get_outbound_fd(const std::string& ip, uint16_t port) {
@@ -530,7 +536,7 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
         outbound_fd_by_endpoint_[key] = fd;
     }
 
-    // Initiator: send handshake
+    // Initiator: send handshake and spawn a thread to read the response.
     if (session_manager_) {
         session_manager_->initSession(peer_name, true);
         auto payload = session_manager_->buildHandshakePayload(peer_name);
@@ -540,6 +546,25 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
             env.mutable_handshake()->ParseFromArray(payload.data(), static_cast<int>(payload.size()));
             send_envelope(fd, env);
         }
+
+        // Set a short read timeout so the thread exits cleanly if no response arrives.
+        timeval tv{};
+        tv.tv_sec = 5;
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+        std::thread([this, fd, peer_name]() {
+            Envelope resp;
+            if (recv_envelope(fd, resp) && resp.type() == Envelope::HANDSHAKE) {
+                const auto& hs = resp.handshake();
+                std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
+                std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
+                std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
+                if (!session_manager_->hasSession(peer_name)) {
+                    session_manager_->initSession(peer_name, true);
+                }
+                session_manager_->processHandshake(peer_name, their_ed25519, their_x25519, sig);
+            }
+        }).detach();
     }
 
     return true;
@@ -619,17 +644,25 @@ void ChatServer::disconnect_peer(const std::string& peer_name) {
     }
 
     // Close connections to this IP
-    std::lock_guard<std::mutex> lock(outbound_mutex_);
-    for (auto it = outbound_fd_by_endpoint_.begin(); it != outbound_fd_by_endpoint_.end(); ) {
-        if (it->first.find(peer_ip) == 0) {
-            std::cout << "chat: closing connection to " << peer_name << " (" << it->first << ")\n";
-            if (it->second >= 0) {
-                close(it->second);
+    {
+        std::lock_guard<std::mutex> lock(outbound_mutex_);
+        for (auto it = outbound_fd_by_endpoint_.begin(); it != outbound_fd_by_endpoint_.end(); ) {
+            if (it->first.find(peer_ip) == 0) {
+                std::cout << "chat: closing connection to " << peer_name << " (" << it->first << ")\n";
+                if (it->second >= 0) {
+                    close(it->second);
+                }
+                it = outbound_fd_by_endpoint_.erase(it);
+            } else {
+                ++it;
             }
-            it = outbound_fd_by_endpoint_.erase(it);
-        } else {
-            ++it;
         }
+    }
+
+    // Clear session key mapping so the next handshake re-establishes it.
+    {
+        std::lock_guard<std::mutex> lock(session_keys_mutex_);
+        ip_to_session_key_.erase(peer_ip);
     }
 }
 
@@ -687,16 +720,18 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
         }
 
         const std::string from_user = resolve_peer_name(peer_ip);
+        const std::string session_key = session_key_for_ip(peer_ip);
 
         // Decrypt if ciphertext is present
         if (!env.ciphertext().empty()) {
-            if (!session_manager_ || !session_manager_->isReady(from_user)) {
-                std::cerr << "chat: encrypted envelope but no session for " << from_user << "\n";
+            if (!session_manager_ || !session_manager_->isReady(session_key)) {
+                std::cerr << "chat: encrypted envelope but no session for " << from_user
+                          << " (session key: " << session_key << ")\n";
                 continue;
             }
             std::vector<uint8_t> nonce(env.nonce().begin(), env.nonce().end());
             std::vector<uint8_t> cipher(env.ciphertext().begin(), env.ciphertext().end());
-            auto plaintext = session_manager_->decrypt(from_user, cipher, nonce);
+            auto plaintext = session_manager_->decrypt(session_key, cipher, nonce);
             if (!plaintext) {
                 std::cerr << "chat: decryption failed for " << from_user << "\n";
                 continue;
@@ -727,17 +762,24 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
 
-                if (!session_manager_->hasSession(from_user)) {
-                    session_manager_->initSession(from_user, false);
-                }
-                bool ok = session_manager_->processHandshake(from_user, their_ed25519, their_x25519, sig);
+                // Always generate fresh ephemeral keys for an inbound handshake.
+                // This ensures the session key is derived from the keys actually
+                // used on this connection, avoiding stale/mismatched sessions.
+                session_manager_->initSession(session_key, false);
+                bool ok = session_manager_->processHandshake(session_key, their_ed25519, their_x25519, sig);
                 if (!ok) {
                     std::cerr << "chat: handshake verification FAILED for " << from_user << "\n";
                     return;
                 }
+                // Lock in the session key for this IP so later messages
+                // use the same key even if discovery renames the peer.
+                {
+                    std::lock_guard<std::mutex> lock(session_keys_mutex_);
+                    ip_to_session_key_[peer_ip] = session_key;
+                }
                 // Responder: send our handshake back
-                if (!session_manager_->weInitiated(from_user)) {
-                    auto payload = session_manager_->buildHandshakePayload(from_user);
+                if (!session_manager_->weInitiated(session_key)) {
+                    auto payload = session_manager_->buildHandshakePayload(session_key);
                     if (!payload.empty()) {
                         Envelope resp;
                         resp.set_type(Envelope::HANDSHAKE);
