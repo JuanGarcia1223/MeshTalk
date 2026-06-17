@@ -2,6 +2,7 @@
 
 #include "chat.pb.h"
 #include "envelope.pb.h"
+#include "crypto/SessionManager.h"
 #include "db/DatabaseManager.h"
 
 #include <arpa/inet.h>
@@ -24,9 +25,22 @@ bool recv_all(int fd, void* data, size_t len);
 int64_t unix_epoch_ms();
 std::string iso_utc_now();
 
-bool send_envelope(int fd, const Envelope& env) {
+bool send_envelope(int fd, const Envelope& env, SessionManager* sm = nullptr,
+                    const std::string& peer_name = "") {
     std::string payload;
     if (!env.SerializeToString(&payload)) return false;
+
+    if (sm && sm->isReady(peer_name)) {
+        auto encrypted = sm->encrypt(peer_name,
+            std::vector<uint8_t>(payload.begin(), payload.end()));
+        if (!encrypted) return false;
+        Envelope wrapper;
+        wrapper.set_type(Envelope::CHAT);
+        wrapper.set_ciphertext(encrypted->first.data(), encrypted->first.size());
+        wrapper.set_nonce(encrypted->second.data(), encrypted->second.size());
+        if (!wrapper.SerializeToString(&payload)) return false;
+    }
+
     uint32_t len_be = htonl(static_cast<uint32_t>(payload.size()));
     return send_all(fd, &len_be, sizeof(len_be)) && send_all(fd, payload.data(), payload.size());
 }
@@ -249,7 +263,7 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
         Envelope env;
         env.set_type(Envelope::FILE_OFFER);
         *env.mutable_file_offer() = std::move(offer);
-        if (!send_envelope(fd, env)) {
+        if (!send_envelope(fd, env, session_manager_, transfer->peer_name)) {
             std::cerr << "chat: failed to send file offer\n";
             transfer->status = FileTransferStatus::FAILED;
             return;
@@ -279,7 +293,7 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
         Envelope env;
         env.set_type(Envelope::FILE_CHUNK);
         *env.mutable_file_chunk() = std::move(chunk);
-        if (!send_envelope(fd, env)) {
+        if (!send_envelope(fd, env, session_manager_, transfer->peer_name)) {
             std::cerr << "chat: failed to send file chunk\n";
             transfer->status = FileTransferStatus::FAILED;
             if (db_) {
@@ -315,7 +329,7 @@ void ChatServer::send_file_chunks(const std::string& transfer_id) {
         Envelope env;
         env.set_type(Envelope::FILE_COMPLETE);
         *env.mutable_file_complete() = std::move(complete);
-        send_envelope(fd, env);
+        send_envelope(fd, env, session_manager_, transfer->peer_name);
     }
 
     transfer->status = FileTransferStatus::COMPLETE;
@@ -515,6 +529,19 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
         std::lock_guard<std::mutex> lock(outbound_mutex_);
         outbound_fd_by_endpoint_[key] = fd;
     }
+
+    // Initiator: send handshake
+    if (session_manager_) {
+        session_manager_->initSession(peer_name, true);
+        auto payload = session_manager_->buildHandshakePayload(peer_name);
+        if (!payload.empty()) {
+            Envelope env;
+            env.set_type(Envelope::HANDSHAKE);
+            env.mutable_handshake()->ParseFromArray(payload.data(), static_cast<int>(payload.size()));
+            send_envelope(fd, env);
+        }
+    }
+
     return true;
 }
 
@@ -545,7 +572,7 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
         return false;
     }
 
-    if (!send_envelope(fd, env)) {
+    if (!send_envelope(fd, env, session_manager_, to_user)) {
         std::cerr << "chat: send failed to " << to_user << "\n";
         const std::string key = endpoint_key(ip, port);
         std::lock_guard<std::mutex> lock(outbound_mutex_);
@@ -661,6 +688,25 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
 
         const std::string from_user = resolve_peer_name(peer_ip);
 
+        // Decrypt if ciphertext is present
+        if (!env.ciphertext().empty()) {
+            if (!session_manager_ || !session_manager_->isReady(from_user)) {
+                std::cerr << "chat: encrypted envelope but no session for " << from_user << "\n";
+                continue;
+            }
+            std::vector<uint8_t> nonce(env.nonce().begin(), env.nonce().end());
+            std::vector<uint8_t> cipher(env.ciphertext().begin(), env.ciphertext().end());
+            auto plaintext = session_manager_->decrypt(from_user, cipher, nonce);
+            if (!plaintext) {
+                std::cerr << "chat: decryption failed for " << from_user << "\n";
+                continue;
+            }
+            if (!env.ParseFromArray(plaintext->data(), static_cast<int>(plaintext->size()))) {
+                std::cerr << "chat: failed to parse decrypted envelope from " << from_user << "\n";
+                continue;
+            }
+        }
+
         switch (env.type()) {
             case Envelope::CHAT:
                 handle_chat_message(from_user, env.chat());
@@ -674,6 +720,33 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
             case Envelope::FILE_COMPLETE:
                 handle_file_complete(from_user, env.file_complete());
                 break;
+            case Envelope::HANDSHAKE: {
+                if (!session_manager_) break;
+                const auto& hs = env.handshake();
+                std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
+                std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
+                std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
+
+                if (!session_manager_->getSession(from_user)) {
+                    session_manager_->initSession(from_user, false);
+                }
+                bool ok = session_manager_->processHandshake(from_user, their_ed25519, their_x25519, sig);
+                if (!ok) {
+                    std::cerr << "chat: handshake verification FAILED for " << from_user << "\n";
+                    return;
+                }
+                // Responder: send our handshake back
+                if (!session_manager_->weInitiated(from_user)) {
+                    auto payload = session_manager_->buildHandshakePayload(from_user);
+                    if (!payload.empty()) {
+                        Envelope resp;
+                        resp.set_type(Envelope::HANDSHAKE);
+                        resp.mutable_handshake()->ParseFromArray(payload.data(), static_cast<int>(payload.size()));
+                        send_envelope(fd, resp);
+                    }
+                }
+                break;
+            }
             default:
                 std::cerr << "chat: unknown envelope type " << env.type() << "\n";
                 break;

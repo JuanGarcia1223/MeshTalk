@@ -10,8 +10,9 @@
 #include <unordered_map>
 #include <vector>
 
-// Forward declaration for database
+// Forward declarations
 class DatabaseManager;
+class SessionManager;
 
 enum class FileTransferStatus {
     PENDING,
@@ -76,6 +77,7 @@ public:
     void set_file_received_callback(
         std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)> callback);
     void set_trust_checker(std::function<bool(const std::string&)> fn) { is_peer_trusted_ = std::move(fn); }
+    void set_session_manager(SessionManager* sm) { session_manager_ = sm; }
     
     bool send_file_offer(const std::string& from_user, const std::string& to_user,
                          const std::string& ip, uint16_t port, const std::string& filepath);
@@ -121,4 +123,5 @@ private:
     std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)>
         file_received_callback_;
     std::function<bool(const std::string&)> is_peer_trusted_;
+    SessionManager* session_manager_{nullptr};
 };
