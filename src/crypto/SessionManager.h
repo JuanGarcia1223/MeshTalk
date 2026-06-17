@@ -50,6 +50,7 @@ public:
 
     bool isReady(const std::string& peer_name) const;
     bool weInitiated(const std::string& peer_name) const;
+    bool hasSession(const std::string& peer_name) const;
 
 private:
     SessionState* getSession(const std::string& peer_name);

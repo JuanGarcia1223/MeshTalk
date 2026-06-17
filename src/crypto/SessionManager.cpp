@@ -1,5 +1,6 @@
 #include "crypto/SessionManager.h"
 
+#include <cstring>
 #include <iostream>
 
 #include <sodium.h>
@@ -194,4 +195,8 @@ bool SessionManager::isReady(const std::string& peer_name) const {
 bool SessionManager::weInitiated(const std::string& peer_name) const {
     const SessionState* session = getSession(peer_name);
     return session && session->we_initiated;
+}
+
+bool SessionManager::hasSession(const std::string& peer_name) const {
+    return sessions_.count(peer_name) > 0;
 }
