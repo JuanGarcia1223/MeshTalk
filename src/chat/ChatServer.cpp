@@ -727,7 +727,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
 
-                if (!session_manager_->getSession(from_user)) {
+                if (!session_manager_->hasSession(from_user)) {
                     session_manager_->initSession(from_user, false);
                 }
                 bool ok = session_manager_->processHandshake(from_user, their_ed25519, their_x25519, sig);
