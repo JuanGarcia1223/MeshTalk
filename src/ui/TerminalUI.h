@@ -105,6 +105,12 @@ public:
     bool handle_download_popup_click(int abs_y, int abs_x);
     bool handle_download_popup_key(char32_t ch);
 
+    void show_download_result_popup(const std::string& message);
+    void close_download_result_popup();
+    void draw_download_result_popup();
+    bool handle_download_result_popup_click(int abs_y, int abs_x);
+    bool handle_download_result_popup_key(char32_t ch);
+
     // Attachment display
     void add_attachment_message(const std::string& peer_name, bool sender,
                                 const std::string& filename, uint64_t file_size,
@@ -229,6 +235,11 @@ private:
     bool showing_download_popup_{false};
     int download_selected_index_{0};
     ncplane* download_popup_plane_{nullptr};
+
+    // File download result popup state
+    bool showing_download_result_popup_{false};
+    std::string download_result_message_;
+    ncplane* download_result_popup_plane_{nullptr};
 
     std::unique_ptr<DatabaseManager> db_manager_;
     std::function<void(const std::string&)> on_peer_offline_;
