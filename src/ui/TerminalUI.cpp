@@ -2210,7 +2210,8 @@ void TerminalUI::draw_debug() {
         return;
     }
 
-    const int visible = static_cast<int>(rows) - 2;
+    const int max_width = static_cast<int>(cols) - 2;
+    const int max_rows = static_cast<int>(rows) - 2;
     std::vector<std::string> lines;
     {
         std::lock_guard<std::mutex> lock(debug_mutex_);
@@ -2218,11 +2219,24 @@ void TerminalUI::draw_debug() {
     }
 
     const int total = static_cast<int>(lines.size());
-    const int start = std::max(0, total - visible);
+
+    // Work backwards from the end to find the first line that fits in max_rows
+    // when accounting for text wrapping.
+    int start = total;
+    int consumed_rows = 0;
+    for (int i = total - 1; i >= 0; --i) {
+        int line_rows = (static_cast<int>(lines[i].size()) + max_width - 1) / max_width;
+        if (line_rows < 1) line_rows = 1;
+        consumed_rows += line_rows;
+        if (consumed_rows > max_rows) {
+            start = i + 1;
+            break;
+        }
+        start = i;
+    }
 
     ncplane_set_channels(debug_plane_, text_ch);
     int row = 1;
-    const int max_width = static_cast<int>(cols) - 2;
     for (int i = start; i < total && row < static_cast<int>(rows) - 1; ++i) {
         const std::string& line = lines[i];
         if (static_cast<int>(line.size()) <= max_width) {
