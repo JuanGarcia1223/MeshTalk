@@ -512,7 +512,7 @@ void TerminalUI::add_attachment_message(const std::string& peer_name, bool sende
     }
 
     // Format attachment message with paperclip emoji
-    std::string content = "📎 Attachment: " + filename + " (" + std::to_string(file_size / 1024) + " KB)";
+    std::string content = "📎 Attachment: " + filename + " (" + std::to_string((file_size + 1023) / 1024) + " KB)";
 
     // Check if peer is trusted before saving to database
     bool is_trusted = false;
@@ -2388,7 +2388,7 @@ void TerminalUI::draw_download_popup() {
             
             std::string direction = file.is_sender ? "→ " : "← ";
             std::string when = normalize_datetime_display(file.timestamp);
-            std::string line = direction + file.filename + " (" + std::to_string(file.file_size / 1024) + " KB) " + when;
+            std::string line = direction + file.filename + " (" + std::to_string((file.file_size + 1023) / 1024) + " KB) " + when;
             
             // Truncate if too long
             if (static_cast<int>(line.size()) > modal_w - 8) {
