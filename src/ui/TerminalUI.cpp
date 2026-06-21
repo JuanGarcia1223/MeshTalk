@@ -2222,12 +2222,17 @@ void TerminalUI::draw_debug() {
 
     ncplane_set_channels(debug_plane_, text_ch);
     int row = 1;
-    for (int i = start; i < total && row < static_cast<int>(rows) - 1; ++i, ++row) {
-        std::string line = lines[i];
-        if (line.size() > cols - 2) {
-            line.resize(cols - 2);
+    const int max_width = static_cast<int>(cols) - 2;
+    for (int i = start; i < total && row < static_cast<int>(rows) - 1; ++i) {
+        const std::string& line = lines[i];
+        if (static_cast<int>(line.size()) <= max_width) {
+            ncplane_putstr_yx(debug_plane_, row, 1, line.c_str());
+            ++row;
+        } else {
+            for (size_t pos = 0; pos < line.size() && row < static_cast<int>(rows) - 1; pos += max_width, ++row) {
+                ncplane_putstr_yx(debug_plane_, row, 1, line.substr(pos, max_width).c_str());
+            }
         }
-        ncplane_putstr_yx(debug_plane_, row, 1, line.c_str());
     }
 }
 
