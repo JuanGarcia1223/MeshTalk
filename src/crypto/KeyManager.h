@@ -3,6 +3,7 @@
 #include "db/DatabaseManager.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -33,14 +34,18 @@ public:
     // Check if initialized
     bool hasKeys() const { return !public_key_.empty() && !private_key_.empty(); }
 
+    void set_logger(std::function<void(const std::string&)> fn) { logger_ = std::move(fn); }
+
 private:
     bool generateKeypair();
     bool loadOrCreateKeys();
     bool deriveX25519Keys();
+    void log(const std::string& msg) const;
 
     DatabaseManager& db_;
     std::vector<uint8_t> public_key_;
     std::vector<uint8_t> private_key_;
     std::vector<uint8_t> x25519_public_key_;
     std::vector<uint8_t> x25519_secret_key_;
+    std::function<void(const std::string&)> logger_;
 };

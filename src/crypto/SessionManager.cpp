@@ -1,7 +1,9 @@
 #include "crypto/SessionManager.h"
 
 #include <cstring>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 
 #include <sodium.h>
 
@@ -18,6 +20,19 @@ const SessionState* SessionManager::getSession(const std::string& peer_name) con
     return (it != sessions_.end()) ? &it->second : nullptr;
 }
 
+void SessionManager::log(const std::string& msg) const {
+    if (logger_) logger_(msg);
+}
+
+std::string SessionManager::hex_prefix(const std::vector<uint8_t>& data, size_t n) {
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < std::min(n, data.size()); ++i) {
+        oss << std::setw(2) << static_cast<int>(data[i]);
+    }
+    return oss.str();
+}
+
 void SessionManager::initSession(const std::string& peer_name, bool we_initiated) {
     SessionState session;
     session.our_ephemeral_x25519_pk.resize(crypto_scalarmult_curve25519_BYTES);
@@ -26,6 +41,8 @@ void SessionManager::initSession(const std::string& peer_name, bool we_initiated
                        session.our_ephemeral_x25519_sk.data());
     session.we_initiated = we_initiated;
     sessions_[peer_name] = std::move(session);
+    log("Generated ephemeral X25519 keypair for " + peer_name +
+        " pk=" + hex_prefix(session.our_ephemeral_x25519_pk, 8));
 }
 
 std::vector<uint8_t> SessionManager::buildHandshakePayload(const std::string& peer_name) {
@@ -67,6 +84,10 @@ std::vector<uint8_t> SessionManager::buildHandshakePayload(const std::string& pe
     write_field(payload, 2, 2, x_pk.data(), x_pk.size());
     write_field(payload, 3, 2, sig.data(), sig.size());
 
+    log("Handshake payload for " + peer_name + 
+        " ed25519_pk=" + hex_prefix(ed_pk, 8) +
+        " x25519_pk=" + hex_prefix(x_pk, 8) +
+        " sig=" + hex_prefix(sig, 8));
     return payload;
 }
 
@@ -94,6 +115,10 @@ bool SessionManager::processHandshake(const std::string& peer_name,
         return false;
     }
 
+    log("Verifying handshake signature from " + peer_name +
+        " their_ed25519=" + hex_prefix(their_ed25519_pk, 8) +
+        " their_x25519=" + hex_prefix(their_x25519_pk, 8));
+
     int ok = crypto_sign_verify_detached(
         signature.data(),
         their_x25519_pk.data(), their_x25519_pk.size(),
@@ -101,8 +126,10 @@ bool SessionManager::processHandshake(const std::string& peer_name,
 
     if (ok != 0) {
         std::cerr << "session: signature verification FAILED for " << peer_name << "\n";
+        log("Signature verification FAILED for " + peer_name);
         return false;
     }
+    log("Signature valid for " + peer_name);
 
     // 2. ECDH: our ephemeral secret * their ephemeral public
     std::vector<uint8_t> shared_secret(crypto_scalarmult_BYTES);
@@ -110,8 +137,10 @@ bool SessionManager::processHandshake(const std::string& peer_name,
                           session->our_ephemeral_x25519_sk.data(),
                           their_x25519_pk.data()) != 0) {
         std::cerr << "session: ECDH failed for " << peer_name << "\n";
+        log("ECDH failed for " + peer_name);
         return false;
     }
+    log("ECDH complete for " + peer_name);
 
     // 3. Derive session key using both ephemeral public keys as context
     uint8_t context[64];
@@ -133,6 +162,7 @@ bool SessionManager::processHandshake(const std::string& peer_name,
     sodium_memzero(shared_secret.data(), shared_secret.size());
 
     session->handshake_complete = true;
+    log("Session key derived for " + peer_name + " key=" + hex_prefix(session->session_key, 8));
     std::cout << "session: handshake complete with " << peer_name << "\n";
     return true;
 }
@@ -156,6 +186,8 @@ SessionManager::encrypt(const std::string& peer_name, const std::vector<uint8_t>
         nullptr,
         nonce, session->session_key.data());
 
+    log("Encrypt for " + peer_name + " plaintext=" + std::to_string(plaintext.size()) +
+        " counter=" + std::to_string(counter) + " ciphertext=" + std::to_string(ciphertext.size()));
     return std::make_pair(std::move(ciphertext),
                           std::vector<uint8_t>(nonce, nonce + sizeof(nonce)));
 }
@@ -182,8 +214,12 @@ SessionManager::decrypt(const std::string& peer_name,
         nonce.data(), session->session_key.data());
 
     if (result != 0) {
+        log("Decrypt FAILED for " + peer_name + " ciphertext=" + std::to_string(ciphertext.size()) +
+            " nonce=" + hex_prefix(nonce, 8));
         return std::nullopt;
     }
+    log("Decrypt for " + peer_name + " ciphertext=" + std::to_string(ciphertext.size()) +
+        " nonce=" + hex_prefix(nonce, 8) + " plaintext=" + std::to_string(plaintext.size()));
     return plaintext;
 }
 

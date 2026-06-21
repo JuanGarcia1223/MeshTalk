@@ -78,6 +78,7 @@ public:
         std::function<void(const std::string&, bool, const std::string&, const std::string&, uint64_t)> callback);
     void set_trust_checker(std::function<bool(const std::string&)> fn) { is_peer_trusted_ = std::move(fn); }
     void set_session_manager(SessionManager* sm) { session_manager_ = sm; }
+    void set_logger(std::function<void(const std::string&)> fn) { logger_ = std::move(fn); }
     
     bool send_file_offer(const std::string& from_user, const std::string& to_user,
                          const std::string& ip, uint16_t port, const std::string& filepath);
@@ -127,4 +128,5 @@ private:
     SessionManager* session_manager_{nullptr};
     std::mutex session_keys_mutex_;
     std::unordered_map<std::string, std::string> ip_to_session_key_;
+    std::function<void(const std::string&)> logger_;
 };

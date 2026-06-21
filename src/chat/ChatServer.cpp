@@ -544,6 +544,7 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
             Envelope env;
             env.set_type(Envelope::HANDSHAKE);
             env.mutable_handshake()->ParseFromArray(payload.data(), static_cast<int>(payload.size()));
+            if (logger_) logger_("Sending handshake to " + peer_name);
             send_envelope(fd, env);
         }
 
@@ -555,6 +556,7 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
         std::thread([this, fd, peer_name]() {
             Envelope resp;
             if (recv_envelope(fd, resp) && resp.type() == Envelope::HANDSHAKE) {
+                if (logger_) logger_("Received handshake response from " + peer_name);
                 const auto& hs = resp.handshake();
                 std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
@@ -724,6 +726,11 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
 
         // Decrypt if ciphertext is present
         if (!env.ciphertext().empty()) {
+            if (logger_) {
+                logger_("Received encrypted envelope from " + from_user +
+                        " ciphertext=" + std::to_string(env.ciphertext().size()) +
+                        " nonce_len=" + std::to_string(env.nonce().size()));
+            }
             if (!session_manager_ || !session_manager_->isReady(session_key)) {
                 std::cerr << "chat: encrypted envelope but no session for " << from_user
                           << " (session key: " << session_key << ")\n";
@@ -757,6 +764,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 break;
             case Envelope::HANDSHAKE: {
                 if (!session_manager_) break;
+                if (logger_) logger_("Received handshake from " + from_user);
                 const auto& hs = env.handshake();
                 std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
@@ -781,6 +789,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 if (!session_manager_->weInitiated(session_key)) {
                     auto payload = session_manager_->buildHandshakePayload(session_key);
                     if (!payload.empty()) {
+                        if (logger_) logger_("Sending handshake response to " + from_user);
                         Envelope resp;
                         resp.set_type(Envelope::HANDSHAKE);
                         resp.mutable_handshake()->ParseFromArray(payload.data(), static_cast<int>(payload.size()));

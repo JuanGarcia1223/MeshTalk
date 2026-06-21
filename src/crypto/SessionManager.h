@@ -4,6 +4,7 @@
 #include "db/DatabaseManager.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -52,11 +53,16 @@ public:
     bool weInitiated(const std::string& peer_name) const;
     bool hasSession(const std::string& peer_name) const;
 
+    void set_logger(std::function<void(const std::string&)> fn) { logger_ = std::move(fn); }
+
 private:
     SessionState* getSession(const std::string& peer_name);
     const SessionState* getSession(const std::string& peer_name) const;
+    void log(const std::string& msg) const;
+    static std::string hex_prefix(const std::vector<uint8_t>& data, size_t n);
 
     KeyManager& key_manager_;
     DatabaseManager& db_;
     std::unordered_map<std::string, SessionState> sessions_;
+    std::function<void(const std::string&)> logger_;
 };

@@ -63,7 +63,12 @@ bool KeyManager::deriveX25519Keys() {
         std::cerr << "crypto: failed to derive X25519 secret key from Ed25519\n";
         return false;
     }
+    log("Derived X25519 keys from Ed25519 identity");
     return true;
+}
+
+void KeyManager::log(const std::string& msg) const {
+    if (logger_) logger_(msg);
 }
 
 std::string KeyManager::fingerprint(const std::vector<uint8_t>& public_key) {
