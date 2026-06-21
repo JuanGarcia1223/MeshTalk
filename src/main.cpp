@@ -43,6 +43,7 @@ int main(int argc, char** argv) {
     bool debug_mode = false;
     bool no_ui_mode = false;
     bool udp_debug = false;
+    bool verbose_crypto = false;
     std::string name;
 
     for (int i = 1; i < argc; ++i) {
@@ -50,13 +51,15 @@ int main(int argc, char** argv) {
             debug_mode = true;
         } else if (std::strcmp(argv[i], "--udp-debug") == 0) {
             udp_debug = true;
+        } else if (std::strcmp(argv[i], "--verbose-crypto") == 0) {
+            verbose_crypto = true;
         } else if (std::strcmp(argv[i], "--noui") == 0) {
             no_ui_mode = true;
         } else if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
             name = argv[++i];
         } else {
             std::cerr << "usage: " << argv[0]
-                      << " --name <one-word-name> [--debug] [--udp-debug] [--noui]\n";
+                      << " --name <one-word-name> [--debug] [--verbose-crypto] [--udp-debug] [--noui]\n";
             return 1;
         }
     }
@@ -147,6 +150,14 @@ int main(int argc, char** argv) {
     // Initialize session manager for E2E encryption
     SessionManager session_manager(key_manager, db_manager);
     chat_server.set_session_manager(&session_manager);
+
+    // Wire crypto logging to debug console when --verbose-crypto is set
+    if (verbose_crypto) {
+        auto crypto_logger = [&ui](const std::string& msg) { ui.add_debug(msg); };
+        key_manager.set_logger(crypto_logger);
+        session_manager.set_logger(crypto_logger);
+        chat_server.set_logger(crypto_logger);
+    }
 
     // Set up callbacks after all objects are initialized
     ui.set_on_trust_callback([&db_manager, &ui](const std::string& peer_name) {
