@@ -2,6 +2,10 @@ syntax = "proto3";
 
 import "chat.proto";
 
+message DeliveryAck {
+  string msg_id = 1;
+}
+
 message HandshakePayload {
   bytes ed25519_pk = 1;  // sender's long-term identity public key (32 bytes)
   bytes x25519_pk  = 2;  // sender's ephemeral X25519 public key (32 bytes)
@@ -15,6 +19,7 @@ message Envelope {
     FILE_CHUNK    = 2;
     FILE_COMPLETE = 3;
     HANDSHAKE     = 4;
+    DELIVERY_ACK  = 5;
   }
 
   Type type = 1;
@@ -25,6 +30,7 @@ message Envelope {
     FileChunk        file_chunk    = 4;
     FileComplete     file_complete = 5;
     HandshakePayload handshake     = 6;
+    DeliveryAck      delivery_ack  = 7;
   }
 
   // v2 E2E fields — leave empty for now
