@@ -186,8 +186,16 @@ SessionManager::encrypt(const std::string& peer_name, const std::vector<uint8_t>
         nullptr,
         nonce, session->session_key.data());
 
+    std::string hex;
+    for (size_t i = 0; i < ciphertext.size() && i < 64; ++i) {
+        char buf[3];
+        std::snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned int>(ciphertext[i]));
+        hex += buf;
+    }
+    if (ciphertext.size() > 64) hex += "...";
     log("Encrypt for " + peer_name + " plaintext=" + std::to_string(plaintext.size()) +
-        " counter=" + std::to_string(counter) + " ciphertext=" + std::to_string(ciphertext.size()));
+        " counter=" + std::to_string(counter) + " ciphertext=" + std::to_string(ciphertext.size()) +
+        " hex=" + hex);
     return std::make_pair(std::move(ciphertext),
                           std::vector<uint8_t>(nonce, nonce + sizeof(nonce)));
 }

@@ -12,6 +12,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -727,9 +728,18 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
         // Decrypt if ciphertext is present
         if (!env.ciphertext().empty()) {
             if (logger_) {
+                std::string hex;
+                const std::string& ct = env.ciphertext();
+                for (size_t i = 0; i < ct.size() && i < 64; ++i) {
+                    char buf[3];
+                    std::snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned char>(ct[i]));
+                    hex += buf;
+                }
+                if (ct.size() > 64) hex += "...";
                 logger_("Received encrypted envelope from " + from_user +
                         " ciphertext=" + std::to_string(env.ciphertext().size()) +
-                        " nonce_len=" + std::to_string(env.nonce().size()));
+                        " nonce_len=" + std::to_string(env.nonce().size()) +
+                        " hex=" + hex);
             }
             if (!session_manager_ || !session_manager_->isReady(session_key)) {
                 std::cerr << "chat: encrypted envelope but no session for " << from_user
