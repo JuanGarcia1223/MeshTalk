@@ -58,11 +58,13 @@ bool DatabaseManager::createSchema() {
         db_->exec(R"(
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                msg_id TEXT,
                 peer_name TEXT NOT NULL,
                 is_sender INTEGER NOT NULL,
                 content TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 timestamp_ms INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('pending', 'sent', 'delivered', 'read')),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         )");
@@ -75,15 +77,29 @@ bool DatabaseManager::createSchema() {
             CREATE INDEX IF NOT EXISTS idx_messages_timestamp_ms ON messages(timestamp_ms);
         )");
 
-        // Schema migration: add timestamp_ms column if it doesn't exist (for old databases)
+        // Schema migration: add columns if they don't exist (for old databases)
         try {
             SQLite::Statement check(*db_, "SELECT timestamp_ms FROM messages LIMIT 1");
             check.executeStep();
         } catch (...) {
-            // Column doesn't exist, add it
             db_->exec("ALTER TABLE messages ADD COLUMN timestamp_ms INTEGER DEFAULT 0");
             std::cout << "db: migrated schema - added timestamp_ms column\n";
         }
+        try {
+            SQLite::Statement check(*db_, "SELECT status FROM messages LIMIT 1");
+            check.executeStep();
+        } catch (...) {
+            db_->exec("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'");
+            db_->exec("ALTER TABLE messages ADD COLUMN msg_id TEXT");
+            std::cout << "db: migrated schema - added status and msg_id columns\n";
+        }
+
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS unread_counts (
+                peer_name TEXT PRIMARY KEY,
+                count INTEGER NOT NULL DEFAULT 0
+            );
+        )");
 
         // Identity table - stores this user's Ed25519 keypair
         db_->exec(R"(
@@ -154,7 +170,9 @@ bool DatabaseManager::createSchema() {
 
 bool DatabaseManager::saveMessage(const std::string& peer_name, bool is_sender,
                                   const std::string& content, const std::string& timestamp,
-                                  int64_t timestamp_ms) {
+                                  int64_t timestamp_ms,
+                                  const std::string& status,
+                                  const std::string& msg_id) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (!db_) {
@@ -163,17 +181,62 @@ bool DatabaseManager::saveMessage(const std::string& peer_name, bool is_sender,
 
     try {
         SQLite::Statement insert(*db_,
-                                 "INSERT INTO messages (peer_name, is_sender, content, timestamp, timestamp_ms) "
-                                 "VALUES (?, ?, ?, ?, ?)");
-        insert.bind(1, peer_name);
-        insert.bind(2, is_sender ? 1 : 0);
-        insert.bind(3, content);
-        insert.bind(4, timestamp);
-        insert.bind(5, timestamp_ms);
+                                 "INSERT INTO messages (msg_id, peer_name, is_sender, content, timestamp, timestamp_ms, status) "
+                                 "VALUES (?, ?, ?, ?, ?, ?, ?)");
+        insert.bind(1, msg_id.empty() ? nullptr : msg_id.c_str());
+        insert.bind(2, peer_name);
+        insert.bind(3, is_sender ? 1 : 0);
+        insert.bind(4, content);
+        insert.bind(5, timestamp);
+        insert.bind(6, timestamp_ms);
+        insert.bind(7, status);
         insert.exec();
         return true;
     } catch (const std::exception& ex) {
         std::cerr << "db: failed to save message: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::updateMessageStatus(const std::string& msg_id, const std::string& status) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_ || msg_id.empty()) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement update(*db_, "UPDATE messages SET status = ? WHERE msg_id = ?");
+        update.bind(1, status);
+        update.bind(2, msg_id);
+        update.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to update message status: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::updateMessageStatusByContent(const std::string& peer_name,
+                                                    const std::string& content,
+                                                    const std::string& status) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement update(*db_,
+            "UPDATE messages SET status = ? WHERE peer_name = ? AND content = ? AND status != 'read' "
+            "ORDER BY id DESC LIMIT 1");
+        update.bind(1, status);
+        update.bind(2, peer_name);
+        update.bind(3, content);
+        update.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to update message status by content: " << ex.what() << "\n";
         return false;
     }
 }
@@ -189,17 +252,19 @@ std::vector<ChatMessageRecord> DatabaseManager::loadAllMessages() {
 
     try {
         SQLite::Statement query(*db_,
-                                "SELECT id, peer_name, is_sender, content, timestamp, timestamp_ms "
+                                "SELECT id, msg_id, peer_name, is_sender, content, timestamp, timestamp_ms, status "
                                 "FROM messages ORDER BY timestamp_ms ASC");
 
         while (query.executeStep()) {
             ChatMessageRecord record;
             record.id = query.getColumn(0).getInt64();
-            record.peer_name = query.getColumn(1).getString();
-            record.is_sender = query.getColumn(2).getInt() != 0;
-            record.content = query.getColumn(3).getString();
-            record.timestamp = query.getColumn(4).getString();
-            record.timestamp_ms = query.getColumn(5).getInt64();
+            record.msg_id = query.getColumn(1).getText();
+            record.peer_name = query.getColumn(2).getString();
+            record.is_sender = query.getColumn(3).getInt() != 0;
+            record.content = query.getColumn(4).getString();
+            record.timestamp = query.getColumn(5).getString();
+            record.timestamp_ms = query.getColumn(6).getInt64();
+            record.status = query.getColumn(7).getText();
             records.push_back(record);
         }
     } catch (const std::exception& ex) {
@@ -220,18 +285,20 @@ std::vector<ChatMessageRecord> DatabaseManager::loadMessagesForPeer(const std::s
 
     try {
         SQLite::Statement query(*db_,
-                                "SELECT id, peer_name, is_sender, content, timestamp, timestamp_ms "
+                                "SELECT id, msg_id, peer_name, is_sender, content, timestamp, timestamp_ms, status "
                                 "FROM messages WHERE peer_name = ? ORDER BY timestamp_ms ASC");
         query.bind(1, peer_name);
 
         while (query.executeStep()) {
             ChatMessageRecord record;
             record.id = query.getColumn(0).getInt64();
-            record.peer_name = query.getColumn(1).getString();
-            record.is_sender = query.getColumn(2).getInt() != 0;
-            record.content = query.getColumn(3).getString();
-            record.timestamp = query.getColumn(4).getString();
-            record.timestamp_ms = query.getColumn(5).getInt64();
+            record.msg_id = query.getColumn(1).getText();
+            record.peer_name = query.getColumn(2).getString();
+            record.is_sender = query.getColumn(3).getInt() != 0;
+            record.content = query.getColumn(4).getString();
+            record.timestamp = query.getColumn(5).getString();
+            record.timestamp_ms = query.getColumn(6).getInt64();
+            record.status = query.getColumn(7).getText();
             records.push_back(record);
         }
     } catch (const std::exception& ex) {
@@ -681,5 +748,83 @@ std::optional<FileTransferRecord> DatabaseManager::getFileTransfer(const std::st
     } catch (const std::exception& ex) {
         std::cerr << "db: failed to get file transfer: " << ex.what() << "\n";
         return std::nullopt;
+    }
+}
+
+int DatabaseManager::getUnreadCount(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return 0;
+    }
+
+    try {
+        SQLite::Statement query(*db_, "SELECT count FROM unread_counts WHERE peer_name = ?");
+        query.bind(1, peer_name);
+        if (query.executeStep()) {
+            return query.getColumn(0).getInt();
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to get unread count: " << ex.what() << "\n";
+    }
+    return 0;
+}
+
+bool DatabaseManager::setUnreadCount(const std::string& peer_name, int count) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT OR REPLACE INTO unread_counts (peer_name, count) VALUES (?, ?)");
+        insert.bind(1, peer_name);
+        insert.bind(2, count);
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to set unread count: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::incrementUnreadCount(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT INTO unread_counts (peer_name, count) VALUES (?, 1) "
+            "ON CONFLICT(peer_name) DO UPDATE SET count = count + 1");
+        insert.bind(1, peer_name);
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to increment unread count: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::clearUnreadCount(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement update(*db_,
+            "INSERT OR REPLACE INTO unread_counts (peer_name, count) VALUES (?, 0)");
+        update.bind(1, peer_name);
+        update.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to clear unread count: " << ex.what() << "\n";
+        return false;
     }
 }

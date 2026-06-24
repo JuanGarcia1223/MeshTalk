@@ -11,11 +11,13 @@
 
 struct ChatMessageRecord {
     int64_t id;
+    std::string msg_id;
     std::string peer_name;
     bool is_sender;
     std::string content;
     std::string timestamp;
     int64_t timestamp_ms;
+    std::string status;  // "pending", "sent", "delivered", "read"
 };
 
 struct PeerIdentity {
@@ -51,13 +53,24 @@ public:
 
     bool saveMessage(const std::string& peer_name, bool is_sender,
                      const std::string& content, const std::string& timestamp,
-                     int64_t timestamp_ms);
+                     int64_t timestamp_ms,
+                     const std::string& status = "sent",
+                     const std::string& msg_id = "");
+    bool updateMessageStatus(const std::string& msg_id, const std::string& status);
+    bool updateMessageStatusByContent(const std::string& peer_name, const std::string& content,
+                                       const std::string& status);
 
     std::vector<ChatMessageRecord> loadAllMessages();
     std::vector<ChatMessageRecord> loadMessagesForPeer(const std::string& peer_name);
     bool clearMessagesForPeer(const std::string& peer_name);
 
     std::vector<std::string> getAllPeers();
+
+    // Unread counts
+    int getUnreadCount(const std::string& peer_name);
+    bool setUnreadCount(const std::string& peer_name, int count);
+    bool incrementUnreadCount(const std::string& peer_name);
+    bool clearUnreadCount(const std::string& peer_name);
 
     // Identity methods
     bool saveIdentity(const std::vector<uint8_t>& public_key, const std::vector<uint8_t>& private_key);
