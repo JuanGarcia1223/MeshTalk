@@ -112,6 +112,15 @@ bool TerminalUI::initDatabase() {
         }
     }
 
+    // Load unread counts from database
+    for (const auto& peer_name : db_peers) {
+        int count = db_manager_->getUnreadCount(peer_name);
+        if (count > 0) {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            unread_counts_[peer_name] = count;
+        }
+    }
+
     add_debug("loaded " + std::to_string(records.size()) + " messages from database");
     return true;
 }
@@ -466,6 +475,38 @@ void TerminalUI::mark_peer_offline(const std::string& name) {
     add_debug("peer BYE received: " + name + " marked offline");
 }
 
+void TerminalUI::increment_unread(const std::string& peer_name) {
+    if (peer_name.empty() || peer_name == self_name_) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        ++unread_counts_[peer_name];
+    }
+    if (db_manager_) {
+        db_manager_->incrementUnreadCount(peer_name);
+    }
+}
+
+void TerminalUI::clear_unread(const std::string& peer_name) {
+    if (peer_name.empty()) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        unread_counts_[peer_name] = 0;
+    }
+    if (db_manager_) {
+        db_manager_->clearUnreadCount(peer_name);
+    }
+}
+
+int TerminalUI::get_unread_count(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    auto it = unread_counts_.find(peer_name);
+    return (it != unread_counts_.end()) ? it->second : 0;
+}
+
 void TerminalUI::show_key_mismatch(const std::string& name, const std::string& new_fingerprint,
                                    const std::string& stored_fingerprint) {
     std::lock_guard<std::mutex> lock(peers_mutex_);
@@ -493,7 +534,22 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
 
     // Only save to database for trusted peers
     if (db_manager_ && is_trusted) {
-        db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms);
+        db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms,
+                                 sender ? "sent" : "unread");
+    }
+
+    // Increment unread count for received messages from non-selected peers
+    if (!sender) {
+        bool is_selected = false;
+        {
+            std::lock_guard<std::mutex> lock(peers_mutex_);
+            if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+                is_selected = (people_rows_[selected_peer_index_].username == peer_name);
+            }
+        }
+        if (!is_selected) {
+            increment_unread(peer_name);
+        }
     }
 
     std::lock_guard<std::mutex> lock(chat_mutex_);
@@ -722,6 +778,7 @@ void TerminalUI::draw_contacts() {
     const uint64_t online_ch = make_channels(0x22, 0xc5, 0x5e, 0x0b, 0x1c, 0x16);  // Green for online dot
     const uint64_t dim_ch = make_channels(0x80, 0x80, 0x80, 0x0b, 0x1c, 0x16);  // Grey for pending
     const uint64_t warning_ch = make_channels(0xff, 0x44, 0x44, 0x0b, 0x1c, 0x16);  // Red for mismatch
+    const uint64_t unread_ch = make_channels(0xff, 0xaa, 0x00, 0x0b, 0x1c, 0x16);  // Orange for unread
 
     draw_panel(people_plane_, " People ", border_ch, text_ch, 0x0b1c16, 0x0b1c16, 0x10271f,
                0x10271f);
@@ -781,6 +838,11 @@ void TerminalUI::draw_contacts() {
         const bool selected = static_cast<int>(i) == selected_peer_index_;
         const bool is_self = trusted_list[i].username == "self";
         const bool is_online = !is_self && online_set.count(trusted_list[i].username) > 0;
+        int unread = 0;
+        if (!is_self) {
+            auto uit = unread_counts_.find(trusted_list[i].username);
+            if (uit != unread_counts_.end()) unread = uit->second;
+        }
 
         ncplane_set_channels(people_plane_, selected ? selected_ch : text_ch);
         if (selected) {
@@ -812,9 +874,33 @@ void TerminalUI::draw_contacts() {
             if (name_part.size() > cols - 4) {
                 name_part.resize(cols - 4);
             }
+            int x = 3 + static_cast<int>(name_part.size());
             ncplane_putstr_yx(people_plane_, y, 3, name_part.c_str());
+            if (unread > 0 && x < static_cast<int>(cols) - 2) {
+                ncplane_set_channels(people_plane_, unread_ch);
+                ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
+                std::string unread_str = " +" + std::to_string(unread);
+                if (x + static_cast<int>(unread_str.size()) > static_cast<int>(cols) - 2) {
+                    unread_str = " +";
+                }
+                ncplane_putstr_yx(people_plane_, y, x, unread_str.c_str());
+                ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
+            }
         } else {
             ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
+            if (!is_self && unread > 0) {
+                int x = 1 + static_cast<int>(line.size());
+                if (x < static_cast<int>(cols) - 2) {
+                    ncplane_set_channels(people_plane_, unread_ch);
+                    ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
+                    std::string unread_str = " +" + std::to_string(unread);
+                    if (x + static_cast<int>(unread_str.size()) > static_cast<int>(cols) - 2) {
+                        unread_str = " +";
+                    }
+                    ncplane_putstr_yx(people_plane_, y, x, unread_str.c_str());
+                    ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
+                }
+            }
         }
 
         if (selected) {
@@ -845,6 +931,9 @@ void TerminalUI::draw_contacts() {
         const bool selected = static_cast<int>(global_idx) == selected_peer_index_;
         const bool is_online = online_set.count(pending_list[i].username) > 0;
         const bool is_mismatch = mismatch_set.count(pending_list[i].username) > 0;
+        int unread = 0;
+        auto uit = unread_counts_.find(pending_list[i].username);
+        if (uit != unread_counts_.end()) unread = uit->second;
 
         // Use dim color for pending peers
         uint64_t peer_ch = selected ? selected_ch : dim_ch;
@@ -889,7 +978,18 @@ void TerminalUI::draw_contacts() {
             if (name_part.size() > cols - 4) {
                 name_part.resize(cols - 4);
             }
+            int x = 3 + static_cast<int>(name_part.size());
             ncplane_putstr_yx(people_plane_, y, 3, name_part.c_str());
+            if (unread > 0 && x < static_cast<int>(cols) - 2) {
+                ncplane_set_channels(people_plane_, unread_ch);
+                ncplane_on_styles(people_plane_, NCSTYLE_BOLD);
+                std::string unread_str = " +" + std::to_string(unread);
+                if (x + static_cast<int>(unread_str.size()) > static_cast<int>(cols) - 2) {
+                    unread_str = " +";
+                }
+                ncplane_putstr_yx(people_plane_, y, x, unread_str.c_str());
+                ncplane_off_styles(people_plane_, NCSTYLE_BOLD);
+            }
         } else {
             ncplane_putstr_yx(people_plane_, y, 1, line.c_str());
         }
@@ -992,6 +1092,9 @@ bool TerminalUI::activate_selected_peer() {
     if (peer.ip.empty() || peer.tcp_port == 0) {
         return false;
     }
+
+    // Clear unread count when selecting a peer
+    clear_unread(peer.username);
 
     if (on_peer_activate_) {
         on_peer_activate_(peer);
