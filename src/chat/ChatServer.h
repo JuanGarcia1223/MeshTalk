@@ -69,6 +69,7 @@ public:
     void flush_pending_messages(const std::string& peer_name, const std::string& ip, uint16_t port);
     void set_receive_handler(std::function<void(const std::string&, const std::string&, const std::string&,
                                                 const std::string&, int64_t)> handler);
+    void set_delivery_callback(std::function<void(const std::string&, const std::string&, bool)> callback);
 
     uint16_t port() const { return port_; }
 
@@ -94,6 +95,7 @@ private:
     std::string session_key_for_ip(const std::string& peer_ip);
     int get_outbound_fd(const std::string& ip, uint16_t port);
     void handle_chat_message(const std::string& from_user, const class ChatMessage& msg);
+    void handle_delivery_ack(const std::string& from_user, const class DeliveryAck& ack);
 
     // File transfer helpers
     void send_file_chunks(const std::string& transfer_id);
@@ -116,6 +118,8 @@ private:
     std::mutex receive_handler_mutex_;
     std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)>
         on_receive_;
+    std::mutex delivery_callback_mutex_;
+    std::function<void(const std::string&, const std::string&, bool)> on_delivery_;
 
     // File transfer state
     DatabaseManager* db_{nullptr};

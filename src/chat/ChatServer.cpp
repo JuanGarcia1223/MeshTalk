@@ -417,6 +417,47 @@ void ChatServer::handle_chat_message(const std::string& from_user, const ChatMes
     if (cb) {
         cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms());
     }
+
+    // Send delivery acknowledgment back to sender
+    // Find the fd for this peer
+    std::string peer_ip;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& kv : name_by_ip_) {
+            if (kv.second == from_user) {
+                peer_ip = kv.first;
+                break;
+            }
+        }
+    }
+    if (!peer_ip.empty()) {
+        for (const auto& kv : outbound_fd_by_endpoint_) {
+            if (kv.first.find(peer_ip) == 0) {
+                Envelope ack_env;
+                ack_env.set_type(Envelope::DELIVERY_ACK);
+                DeliveryAck ack;
+                ack.set_msg_id(msg.msg_id());
+                *ack_env.mutable_delivery_ack() = std::move(ack);
+                send_envelope(kv.second, ack_env, session_manager_, from_user);
+                break;
+            }
+        }
+    }
+}
+
+void ChatServer::handle_delivery_ack(const std::string& from_user, const DeliveryAck& ack) {
+    std::cout << "chat: delivery ack from=" << from_user << " msg_id=" << ack.msg_id() << "\n";
+    if (db_) {
+        db_->updateMessageStatus(ack.msg_id(), "delivered");
+    }
+    std::function<void(const std::string&, const std::string&, bool)> cb;
+    {
+        std::lock_guard<std::mutex> lock(delivery_callback_mutex_);
+        cb = on_delivery_;
+    }
+    if (cb) {
+        cb(from_user, ack.msg_id(), true);
+    }
 }
 
 bool ChatServer::start() {
@@ -776,6 +817,12 @@ void ChatServer::set_receive_handler(
     on_receive_ = std::move(handler);
 }
 
+void ChatServer::set_delivery_callback(
+    std::function<void(const std::string&, const std::string&, bool)> callback) {
+    std::lock_guard<std::mutex> lock(delivery_callback_mutex_);
+    on_delivery_ = std::move(callback);
+}
+
 void ChatServer::accept_loop() {
     while (running_) {
         sockaddr_in peer{};
@@ -908,6 +955,9 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 }
                 break;
             }
+            case Envelope::DELIVERY_ACK:
+                handle_delivery_ack(from_user, env.delivery_ack());
+                break;
             default:
                 std::cerr << "chat: unknown envelope type " << env.type() << "\n";
                 break;
