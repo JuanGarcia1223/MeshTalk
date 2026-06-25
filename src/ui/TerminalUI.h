@@ -55,6 +55,9 @@ public:
                      bool trusted = false, bool untrusted_legacy = false,
                      const std::string& fingerprint = "");
     void mark_peer_offline(const std::string& name);
+    void increment_unread(const std::string& peer_name);
+    void clear_unread(const std::string& peer_name);
+    int get_unread_count(const std::string& peer_name);
     void show_key_mismatch(const std::string& name, const std::string& new_fingerprint, 
                            const std::string& stored_fingerprint);
     void add_chat_message(const std::string& peer_name, bool sender,
@@ -193,6 +196,7 @@ private:
     std::set<std::string> trusted_peers_;
     std::set<std::string> pending_peers_;
     std::set<std::string> mismatch_peers_;
+    std::unordered_map<std::string, int> unread_counts_;
     std::vector<PeerInfo> people_rows_;
     int selected_peer_index_{0};
     
