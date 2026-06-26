@@ -828,3 +828,22 @@ bool DatabaseManager::clearUnreadCount(const std::string& peer_name) {
         return false;
     }
 }
+
+bool DatabaseManager::markMessagesAsRead(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement update(*db_,
+            "UPDATE messages SET status = 'read' WHERE peer_name = ? AND status = 'unread'");
+        update.bind(1, peer_name);
+        update.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to mark messages as read: " << ex.what() << "\n";
+        return false;
+    }
+}
