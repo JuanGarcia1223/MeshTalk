@@ -242,9 +242,10 @@ int main(int argc, char** argv) {
                         ui.show_key_mismatch(peer_name, fingerprint,
                                             KeyManager::fingerprint(existing->public_key));
                     } else if (existing->trust_status == "trusted") {
-                        // Trusted peer
+                        // Trusted peer - reconnect and flush any queued messages
                         ui.upsert_peer(peer_name, peer_ip, peer_port, true, false, fingerprint);
                         chat_server.register_peer(peer_name, peer_ip);
+                        chat_server.connect_to(peer_ip, peer_port, peer_name);
                     } else {
                         // Pending peer
                         ui.upsert_peer(peer_name, peer_ip, peer_port, false, false, fingerprint);

@@ -1305,53 +1305,51 @@ void TerminalUI::draw_chat() {
         }
     }
 
-    // Only draw input box if peer is online
-    if (peer_online) {
-        ncplane_cursor_move_yx(chat_plane_, input_y, 1);
-        ncplane_rounded_box_sized(chat_plane_, 0, input_border_ch, input_h, input_w, 0);
-        ncplane_set_channels(chat_plane_, base_text_ch);
-        ncplane_putstr_yx(chat_plane_, input_y, 3, " Input ");
+    // Always draw input box (messages queue when peer is offline)
+    ncplane_cursor_move_yx(chat_plane_, input_y, 1);
+    ncplane_rounded_box_sized(chat_plane_, 0, input_border_ch, input_h, input_w, 0);
+    ncplane_set_channels(chat_plane_, base_text_ch);
+    ncplane_putstr_yx(chat_plane_, input_y, 3, " Input ");
 
-        const std::vector<std::string> wrapped_input = wrap_text(input_text, input_inner_w);
-        const int input_visible = input_h - 2;
-        int input_start = static_cast<int>(wrapped_input.size()) - input_visible;
-        if (input_start < 0) {
-            input_start = 0;
+    const std::vector<std::string> wrapped_input = wrap_text(input_text, input_inner_w);
+    const int input_visible = input_h - 2;
+    int input_start = static_cast<int>(wrapped_input.size()) - input_visible;
+    if (input_start < 0) {
+        input_start = 0;
+    }
+
+    for (int i = 0; i < input_visible; ++i) {
+        const int idx = input_start + i;
+        if (idx >= static_cast<int>(wrapped_input.size())) {
+            break;
         }
+        ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped_input[idx].c_str());
+    }
 
-        for (int i = 0; i < input_visible; ++i) {
-            const int idx = input_start + i;
-            if (idx >= static_cast<int>(wrapped_input.size())) {
-                break;
+    // Draw blinking cursor at end of input
+    if (cursor_visible_) {
+        int cursor_line = 0;
+        int cursor_x = 2;
+        
+        if (!input_buffer_.empty() && !wrapped_input.empty()) {
+            // Cursor at end of text
+            cursor_line = static_cast<int>(wrapped_input.size()) - 1 - input_start;
+            if (cursor_line >= 0 && cursor_line < input_visible) {
+                const std::string& last_line = wrapped_input[cursor_line + input_start];
+                cursor_x = 2 + static_cast<int>(last_line.size());
             }
-            ncplane_putstr_yx(chat_plane_, input_y + 1 + i, 2, wrapped_input[idx].c_str());
         }
-
-        // Draw blinking cursor at end of input
-        if (cursor_visible_) {
-            int cursor_line = 0;
-            int cursor_x = 2;
-            
-            if (!input_buffer_.empty() && !wrapped_input.empty()) {
-                // Cursor at end of text
-                cursor_line = static_cast<int>(wrapped_input.size()) - 1 - input_start;
-                if (cursor_line >= 0 && cursor_line < input_visible) {
-                    const std::string& last_line = wrapped_input[cursor_line + input_start];
-                    cursor_x = 2 + static_cast<int>(last_line.size());
-                }
-            }
-            
-            // Ensure cursor is within bounds
-            if (cursor_line >= 0 && cursor_line < input_visible && cursor_x < input_w) {
-                // Draw cursor as inverse video block
-                ncplane_set_channels(chat_plane_, make_channels(0x00, 0x00, 0x00, 0xff, 0xff, 0xff));
-                ncplane_putstr_yx(chat_plane_, input_y + 1 + cursor_line, cursor_x, " ");
-            }
+        
+        // Ensure cursor is within bounds
+        if (cursor_line >= 0 && cursor_line < input_visible && cursor_x < input_w) {
+            // Draw cursor as inverse video block
+            ncplane_set_channels(chat_plane_, make_channels(0x00, 0x00, 0x00, 0xff, 0xff, 0xff));
+            ncplane_putstr_yx(chat_plane_, input_y + 1 + cursor_line, cursor_x, " ");
         }
     }
 
     // Draw command menu if showing
-    if (showing_command_menu_ && peer_online) {
+    if (showing_command_menu_) {
         draw_command_menu();
     }
 }
