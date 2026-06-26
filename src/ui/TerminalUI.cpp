@@ -357,19 +357,14 @@ void TerminalUI::run() {
                     chat_scroll_offset_ = 0;
                     continue;
                 }
-                // Don't allow sending if peer is offline
-                if (!is_selected_peer_online()) {
-                    add_debug("cannot send: peer is offline");
-                } else {
-                    const std::string text = input_buffer_;
-                    const PeerInfo peer = people_rows_[selected_peer_index_];
+                const std::string text = input_buffer_;
+                const PeerInfo peer = people_rows_[selected_peer_index_];
 
-                    if (peer.username == "self") {
-                        add_chat_message("self", true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
-                    } else if (on_send_chat_) {
-                        if (on_send_chat_(peer, text)) {
-                            add_chat_message(peer.username, true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
-                        }
+                if (peer.username == "self") {
+                    add_chat_message("self", true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
+                } else if (on_send_chat_) {
+                    if (on_send_chat_(peer, text)) {
+                        add_chat_message(peer.username, true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
                     }
                 }
                 input_buffer_.clear();
@@ -1164,18 +1159,6 @@ void TerminalUI::draw_chat() {
         return;
     }
 
-    // If peer is offline, show offline message instead of input box
-    if (!peer_online) {
-        const std::string offline_msg = " Offline - cannot send messages ";
-        const int msg_len = static_cast<int>(offline_msg.size());
-        const int center_x = (static_cast<int>(cols) - msg_len) / 2;
-        const int bottom_y = static_cast<int>(rows) - 2;
-        ncplane_set_channels(chat_plane_, offline_ch);
-        ncplane_putstr_yx(chat_plane_, bottom_y, std::max(1, center_x), offline_msg.c_str());
-        ncplane_set_channels(chat_plane_, base_text_ch);
-        // Don't draw input box, return early after drawing messages
-    }
-
     const int input_w = static_cast<int>(cols) - 2;
     const int input_inner_w = std::max(1, input_w - 2);
 
@@ -1454,7 +1437,7 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
             const PeerInfo peer = people_rows_[selected_peer_index_];
             if (peer.username == "self") {
                 add_chat_message("self", true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
-            } else if (on_send_chat_ && is_selected_peer_online()) {
+            } else if (on_send_chat_) {
                 if (on_send_chat_(peer, msg)) {
                     add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
                 }
@@ -1466,7 +1449,7 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
             const PeerInfo peer = people_rows_[selected_peer_index_];
             if (peer.username == "self") {
                 add_chat_message("self", true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
-            } else if (on_send_chat_ && is_selected_peer_online()) {
+            } else if (on_send_chat_) {
                 if (on_send_chat_(peer, msg)) {
                     add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
                 }
