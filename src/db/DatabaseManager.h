@@ -71,6 +71,7 @@ public:
     bool setUnreadCount(const std::string& peer_name, int count);
     bool incrementUnreadCount(const std::string& peer_name);
     bool clearUnreadCount(const std::string& peer_name);
+    bool markMessagesAsRead(const std::string& peer_name);
 
     // Identity methods
     bool saveIdentity(const std::vector<uint8_t>& public_key, const std::vector<uint8_t>& private_key);

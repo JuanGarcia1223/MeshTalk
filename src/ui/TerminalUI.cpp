@@ -498,6 +498,7 @@ void TerminalUI::clear_unread(const std::string& peer_name) {
     }
     if (db_manager_) {
         db_manager_->clearUnreadCount(peer_name);
+        db_manager_->markMessagesAsRead(peer_name);
     }
 }
 
