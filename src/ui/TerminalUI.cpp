@@ -317,6 +317,22 @@ void TerminalUI::run() {
             continue;
         }
 
+        // Handle alert popup
+        if (showing_alert_popup_) {
+            if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
+                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
+                if (handle_alert_popup_click(in.y, in.x)) {
+                    render();
+                    continue;
+                }
+            } else if (key_action && handle_alert_popup_key(static_cast<char32_t>(input))) {
+                render();
+                continue;
+            }
+            render();
+            continue;
+        }
+
         if (key_action &&
             (input == static_cast<uint32_t>('c') || input == static_cast<uint32_t>('C')) &&
             (ncinput_ctrl_p(&in) || in.ctrl)) {
@@ -362,6 +378,8 @@ void TerminalUI::run() {
 
                 if (peer.username == "self") {
                     add_chat_message("self", true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
+                } else if (!is_selected_peer_online()) {
+                    show_alert_popup("Unable to send: " + peer.username + " is offline");
                 } else if (on_send_chat_) {
                     if (on_send_chat_(peer, text)) {
                         add_chat_message(peer.username, true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
@@ -639,6 +657,11 @@ void TerminalUI::render() {
     // Draw download result popup on top if showing
     if (showing_download_result_popup_) {
         draw_download_result_popup();
+    }
+
+    // Draw alert popup on top if showing
+    if (showing_alert_popup_) {
+        draw_alert_popup();
     }
 
     notcurses_render(nc_);
@@ -1427,6 +1450,17 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
     size_t space_pos = cmd_line.find(' ');
     std::string cmd = (space_pos == std::string::npos) ? cmd_line : cmd_line.substr(0, space_pos);
     std::string args = (space_pos == std::string::npos) ? "" : cmd_line.substr(space_pos + 1);
+
+    // Check if peer is offline - only /DOWNLOAD, /STATUS, /CLEAR are allowed
+    bool peer_online = is_selected_peer_online();
+    std::string peer_name = "self";
+    if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+        peer_name = people_rows_[selected_peer_index_].username;
+    }
+    if (!peer_online && peer_name != "self" && cmd != "/DOWNLOAD" && cmd != "/STATUS" && cmd != "/CLEAR") {
+        show_alert_popup("Unable to send: " + peer_name + " is offline");
+        return;
+    }
 
     if (cmd == "/HI") {
         std::string msg = args.empty() ? "Hello!" : args;
@@ -2706,6 +2740,119 @@ bool TerminalUI::handle_download_result_popup_key(char32_t ch) {
         case 'o':
         case 'O':
             close_download_result_popup();
+            return true;
+    }
+    return false;
+}
+
+void TerminalUI::show_alert_popup(const std::string& message) {
+    if (showing_alert_popup_) {
+        close_alert_popup();
+    }
+    showing_alert_popup_ = true;
+    alert_message_ = message;
+    alert_popup_plane_ = nullptr;
+}
+
+void TerminalUI::close_alert_popup() {
+    showing_alert_popup_ = false;
+    alert_message_.clear();
+    if (alert_popup_plane_) {
+        ncplane_destroy(alert_popup_plane_);
+        alert_popup_plane_ = nullptr;
+    }
+}
+
+void TerminalUI::draw_alert_popup() {
+    if (!showing_alert_popup_ || !nc_) return;
+
+    unsigned term_rows = 0, term_cols = 0;
+    notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
+
+    const int modal_w = 56;
+    const int modal_h = 7;
+    const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
+    const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
+
+    if (!alert_popup_plane_) {
+        alert_popup_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "alert_popup");
+        if (!alert_popup_plane_) return;
+    }
+
+    const uint64_t border_ch = make_channels(0xff, 0x88, 0x22, 0x22, 0x12, 0x29);
+    const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x22, 0x12, 0x29);
+    const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
+    const uint64_t button_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);
+    const uint32_t bg_color = 0x221229;
+
+    ncplane_erase(alert_popup_plane_);
+    uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
+    ncchannels_set_bg_rgb(&ul, bg_color);
+    ncchannels_set_bg_rgb(&ur, bg_color);
+    ncchannels_set_bg_rgb(&ll, bg_color);
+    ncchannels_set_bg_rgb(&lr, bg_color);
+    ncchannels_set_fg_rgb(&ul, bg_color);
+    ncchannels_set_fg_rgb(&ur, bg_color);
+    ncchannels_set_fg_rgb(&ll, bg_color);
+    ncchannels_set_fg_rgb(&lr, bg_color);
+    ncplane_gradient(alert_popup_plane_, 0, 0, modal_h, modal_w, " ", 0, ul, ur, ll, lr);
+
+    ncplane_set_channels(alert_popup_plane_, border_ch);
+    ncplane_rounded_box_sized(alert_popup_plane_, 0, border_ch, modal_h, modal_w, 0);
+
+    ncplane_set_channels(alert_popup_plane_, title_ch);
+    ncplane_on_styles(alert_popup_plane_, NCSTYLE_BOLD);
+    ncplane_putstr_yx(alert_popup_plane_, 1, 2, " Alert ");
+    ncplane_off_styles(alert_popup_plane_, NCSTYLE_BOLD);
+
+    ncplane_set_channels(alert_popup_plane_, text_ch);
+    std::string msg = alert_message_;
+    if (static_cast<int>(msg.size()) > modal_w - 6) {
+        msg = msg.substr(0, modal_w - 9) + "...";
+    }
+    int msg_x = (modal_w - static_cast<int>(msg.size())) / 2;
+    if (msg_x < 2) msg_x = 2;
+    ncplane_putstr_yx(alert_popup_plane_, 3, msg_x, msg.c_str());
+
+    ncplane_set_channels(alert_popup_plane_, button_ch);
+    ncplane_putstr_yx(alert_popup_plane_, modal_h - 2, (modal_w - 10) / 2, "  [ OK ]  ");
+}
+
+bool TerminalUI::handle_alert_popup_click(int abs_y, int abs_x) {
+    if (!showing_alert_popup_ || !alert_popup_plane_) return false;
+
+    int plane_y = 0, plane_x = 0;
+    ncplane_abs_yx(alert_popup_plane_, &plane_y, &plane_x);
+
+    unsigned h = 0, w = 0;
+    ncplane_dim_yx(alert_popup_plane_, &h, &w);
+
+    const int rel_y = abs_y - plane_y;
+    const int rel_x = abs_x - plane_x;
+
+    if (rel_y == static_cast<int>(h) - 2 && rel_x >= static_cast<int>(w) / 2 - 5 && rel_x <= static_cast<int>(w) / 2 + 5) {
+        close_alert_popup();
+        return true;
+    }
+
+    if (rel_y >= 0 && rel_y < static_cast<int>(h) && rel_x >= 0 && rel_x < static_cast<int>(w)) {
+        return true;
+    }
+
+    return false;
+}
+
+bool TerminalUI::handle_alert_popup_key(char32_t ch) {
+    if (!showing_alert_popup_) return false;
+
+    switch (ch) {
+        case NCKEY_ENTER:
+        case '\n':
+        case '\r':
+        case 27:  // Escape
+        case 'o':
+        case 'O':
+            close_alert_popup();
             return true;
     }
     return false;

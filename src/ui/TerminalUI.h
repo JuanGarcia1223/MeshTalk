@@ -245,6 +245,16 @@ private:
     std::string download_result_message_;
     ncplane* download_result_popup_plane_{nullptr};
 
+    // Alert popup state (for offline warning, etc.)
+    bool showing_alert_popup_{false};
+    std::string alert_message_;
+    ncplane* alert_popup_plane_{nullptr};
+    void show_alert_popup(const std::string& message);
+    void close_alert_popup();
+    void draw_alert_popup();
+    bool handle_alert_popup_click(int abs_y, int abs_x);
+    bool handle_alert_popup_key(char32_t ch);
+
     std::unique_ptr<DatabaseManager> db_manager_;
     std::function<void(const std::string&)> on_peer_offline_;
     std::function<void(const std::string&)> on_trust_peer_;
