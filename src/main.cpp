@@ -36,6 +36,119 @@ bool is_one_word(const std::string& value) {
 
 void on_signal(int) { g_keep_running = false; }
 
+void run_info_editor(DatabaseManager& db) {
+    while (true) {
+        std::cout << "\n=== Personal Info Editor ===\n";
+        std::cout << "1. Dump existing entries\n";
+        std::cout << "2. Edit entry\n";
+        std::cout << "3. Add entry\n";
+        std::cout << "4. Delete entry\n";
+        std::cout << "9. Exit\n";
+        std::cout << "Choice: ";
+        std::string choice;
+        std::getline(std::cin, choice);
+
+        if (choice == "1") {
+            auto entries = db.loadAllInfoEntries();
+            if (entries.empty()) {
+                std::cout << "No entries found.\n";
+            } else {
+                std::cout << "\n  # | Key                | Value\n";
+                std::cout << "----+--------------------+--------------------------------\n";
+                for (size_t i = 0; i < entries.size(); ++i) {
+                    std::cout << " " << std::setw(2) << (i + 1) << " | "
+                              << std::setw(18) << std::left << entries[i].key.substr(0, 18) << " | "
+                              << entries[i].value << "\n";
+                }
+            }
+        } else if (choice == "2") {
+            auto entries = db.loadAllInfoEntries();
+            if (entries.empty()) {
+                std::cout << "No entries to edit.\n";
+                continue;
+            }
+            std::cout << "\n  # | Key                | Value\n";
+            std::cout << "----+--------------------+--------------------------------\n";
+            for (size_t i = 0; i < entries.size(); ++i) {
+                std::cout << " " << std::setw(2) << (i + 1) << " | "
+                          << std::setw(18) << std::left << entries[i].key.substr(0, 18) << " | "
+                          << entries[i].value << "\n";
+            }
+            std::cout << "Enter index to edit: ";
+            std::string idx_str;
+            std::getline(std::cin, idx_str);
+            try {
+                size_t idx = std::stoul(idx_str) - 1;
+                if (idx >= entries.size()) {
+                    std::cout << "Invalid index.\n";
+                    continue;
+                }
+                std::cout << "Current value: " << entries[idx].value << "\n";
+                std::cout << "Enter new value: ";
+                std::string new_value;
+                std::getline(std::cin, new_value);
+                if (db.saveInfoEntry(entries[idx].key, new_value)) {
+                    std::cout << "Updated.\n";
+                } else {
+                    std::cout << "Failed to update.\n";
+                }
+            } catch (...) {
+                std::cout << "Invalid index.\n";
+            }
+        } else if (choice == "3") {
+            std::cout << "Enter key: ";
+            std::string key;
+            std::getline(std::cin, key);
+            if (key.empty()) {
+                std::cout << "Key cannot be empty.\n";
+                continue;
+            }
+            std::cout << "Enter value: ";
+            std::string value;
+            std::getline(std::cin, value);
+            if (db.saveInfoEntry(key, value)) {
+                std::cout << "Added.\n";
+            } else {
+                std::cout << "Failed to add.\n";
+            }
+        } else if (choice == "4") {
+            auto entries = db.loadAllInfoEntries();
+            if (entries.empty()) {
+                std::cout << "No entries to delete.\n";
+                continue;
+            }
+            std::cout << "\n  # | Key                | Value\n";
+            std::cout << "----+--------------------+--------------------------------\n";
+            for (size_t i = 0; i < entries.size(); ++i) {
+                std::cout << " " << std::setw(2) << (i + 1) << " | "
+                          << std::setw(18) << std::left << entries[i].key.substr(0, 18) << " | "
+                          << entries[i].value << "\n";
+            }
+            std::cout << "Enter index to delete: ";
+            std::string idx_str;
+            std::getline(std::cin, idx_str);
+            try {
+                size_t idx = std::stoul(idx_str) - 1;
+                if (idx >= entries.size()) {
+                    std::cout << "Invalid index.\n";
+                    continue;
+                }
+                if (db.deleteInfoEntry(entries[idx].key)) {
+                    std::cout << "Deleted.\n";
+                } else {
+                    std::cout << "Failed to delete.\n";
+                }
+            } catch (...) {
+                std::cout << "Invalid index.\n";
+            }
+        } else if (choice == "9") {
+            std::cout << "Exiting info editor.\n";
+            break;
+        } else {
+            std::cout << "Invalid choice.\n";
+        }
+    }
+}
 
 }    // namespace
 
@@ -44,6 +157,7 @@ int main(int argc, char** argv) {
     bool no_ui_mode = false;
     bool udp_debug = false;
     bool verbose_crypto = false;
+    bool edit_info_mode = false;
     std::string name;
 
     for (int i = 1; i < argc; ++i) {
@@ -55,11 +169,13 @@ int main(int argc, char** argv) {
             verbose_crypto = true;
         } else if (std::strcmp(argv[i], "--noui") == 0) {
             no_ui_mode = true;
+        } else if (std::strcmp(argv[i], "--edit-info") == 0) {
+            edit_info_mode = true;
         } else if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
             name = argv[++i];
         } else {
             std::cerr << "usage: " << argv[0]
-                      << " --name <one-word-name> [--debug] [--verbose-crypto] [--udp-debug] [--noui]\n";
+                      << " --name <one-word-name> [--debug] [--verbose-crypto] [--udp-debug] [--noui] [--edit-info]\n";
             return 1;
         }
     }
@@ -67,6 +183,16 @@ int main(int argc, char** argv) {
     if (!is_one_word(name)) {
         std::cerr << "--name with a one-word value is required\n";
         return 1;
+    }
+
+    if (edit_info_mode) {
+        DatabaseManager db_manager(name);
+        if (!db_manager.init()) {
+            std::cerr << "failed to initialize database\n";
+            return 1;
+        }
+        run_info_editor(db_manager);
+        return 0;
     }
 
     std::signal(SIGINT, on_signal);
@@ -206,6 +332,28 @@ int main(int argc, char** argv) {
             return;
         }
         ui.add_attachment_message(peer_name, is_sender, filename, file_size, ui.local_datetime_now(), ui.unix_epoch_ms_now());
+    });
+
+    // Set up info request/response callbacks
+    chat_server.set_info_received_callback([&ui, &db_manager](const std::string& peer_name,
+                                                               const std::vector<std::pair<std::string, std::string>>& entries) {
+        ui.show_peer_info_popup(peer_name, entries);
+    });
+
+    ui.set_on_request_info([&chat_server, &name, &ui](const std::string& peer_name) {
+        // Look up peer IP and port from UI
+        auto peer_opt = ui.get_peer_info(peer_name);
+        if (!peer_opt) {
+            ui.add_debug("Cannot request info: peer " + peer_name + " not found");
+            return;
+        }
+        auto peer = *peer_opt;
+        if (peer.ip.empty() || peer.tcp_port == 0) {
+            ui.add_debug("Cannot request info: peer " + peer_name + " is offline");
+            return;
+        }
+        ui.add_debug("Requesting info from " + peer_name);
+        chat_server.request_info(name, peer_name, peer.ip, peer.tcp_port);
     });
 
     UdpHelloBroadcaster broadcaster(

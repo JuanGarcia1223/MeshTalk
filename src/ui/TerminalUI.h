@@ -69,6 +69,7 @@ public:
     
     // Identity display callback
     void set_on_show_identity(std::function<void()> callback) { on_show_identity_ = callback; }
+    void set_on_request_info(std::function<void(const std::string&)> callback) { on_request_info_ = callback; }
 
     // File transfer callbacks
     void set_on_upload_file(std::function<bool(const std::string&, const std::string&, const std::string&, uint16_t)> callback) { on_upload_file_ = callback; }
@@ -80,6 +81,14 @@ public:
     void draw_identity_popup();
     bool handle_identity_popup_click(int abs_y, int abs_x);
     bool handle_identity_popup_key(char32_t ch);
+
+    // Peer info popup
+    void show_peer_info_popup(const std::string& peer_name,
+                              const std::vector<std::pair<std::string, std::string>>& entries);
+    void close_peer_info_popup();
+    void draw_peer_info_popup();
+    bool handle_peer_info_popup_click(int abs_y, int abs_x);
+    bool handle_peer_info_popup_key(char32_t ch);
 
     // Command subsystem
     void draw_command_menu();
@@ -124,6 +133,8 @@ public:
     static int64_t unix_epoch_ms_now();
 
     void add_debug(const std::string& line);
+
+    std::optional<PeerInfo> get_peer_info(const std::string& peer_name);
 
 private:
     void render();
@@ -219,6 +230,12 @@ private:
     std::string identity_popup_fingerprint_;
     ncplane* identity_popup_plane_{nullptr};
 
+    // Peer info popup state
+    bool showing_peer_info_popup_{false};
+    std::string peer_info_popup_name_;
+    std::vector<std::pair<std::string, std::string>> peer_info_popup_entries_;
+    ncplane* peer_info_popup_plane_{nullptr};
+
     // Clear chat confirmation modal state
     bool showing_clear_modal_{false};
     std::string clear_modal_peer_;
@@ -259,6 +276,7 @@ private:
     std::function<void(const std::string&)> on_peer_offline_;
     std::function<void(const std::string&)> on_trust_peer_;
     std::function<void()> on_show_identity_;
+    std::function<void(const std::string&)> on_request_info_;
     std::function<bool(const std::string&, const std::string&, const std::string&, uint16_t)> on_upload_file_;
     std::function<bool(const std::string&, const std::string&)> on_download_file_;
 

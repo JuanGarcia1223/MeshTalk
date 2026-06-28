@@ -233,6 +233,22 @@ void TerminalUI::run() {
             continue;
         }
 
+        // Handle peer info popup (it blocks other inputs)
+        if (showing_peer_info_popup_) {
+            if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
+                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
+                if (handle_peer_info_popup_click(in.y, in.x)) {
+                    render();
+                    continue;
+                }
+            } else if (key_action && handle_peer_info_popup_key(static_cast<char32_t>(input))) {
+                render();
+                continue;
+            }
+            render();
+            continue;
+        }
+
         // Handle clear modal (it blocks other inputs)
         if (showing_clear_modal_) {
             if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
@@ -348,6 +364,19 @@ void TerminalUI::run() {
                 on_show_identity_();
             }
             continue;  // Don't add 'D' to input buffer
+        }
+
+        // Handle Ctrl+Shift+I to request info from selected peer
+        if (key_action &&
+            (input == static_cast<uint32_t>('i') || input == static_cast<uint32_t>('I')) &&
+            (ncinput_ctrl_p(&in) || in.ctrl) && (ncinput_shift_p(&in) || in.shift)) {
+            if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+                const std::string peer_name = people_rows_[selected_peer_index_].username;
+                if (peer_name != "self" && on_request_info_) {
+                    on_request_info_(peer_name);
+                }
+            }
+            continue;
         }
 
         // Arrow keys scroll chat history
@@ -637,6 +666,11 @@ void TerminalUI::render() {
     // Draw identity popup on top if showing
     if (showing_identity_popup_) {
         draw_identity_popup();
+    }
+
+    // Draw peer info popup on top if showing
+    if (showing_peer_info_popup_) {
+        draw_peer_info_popup();
     }
 
     // Draw clear modal on top if showing
@@ -1096,16 +1130,28 @@ bool TerminalUI::activate_selected_peer() {
         is_pending = pending_peers_.count(peer.username) > 0;
     }
 
-    // If pending, show trust modal
+    // If pending, show trust modal and request info
     if (is_pending) {
         std::string fp = peer.fingerprint.empty() ? "UNKNOWN" : peer.fingerprint;
         show_trust_modal(peer.username, fp);
+        if (peer.ip.empty() || peer.tcp_port == 0) {
+            return true;
+        }
+        if (on_request_info_) {
+            on_request_info_(peer.username);
+        }
         return true;
     }
 
-    // If not trusted (legacy or mismatch), don't allow activation
+    // If not trusted (legacy or mismatch), request info instead of activating
     if (!is_trusted) {
-        return false;
+        if (peer.ip.empty() || peer.tcp_port == 0) {
+            return false;
+        }
+        if (on_request_info_) {
+            on_request_info_(peer.username);
+        }
+        return true;
     }
 
     if (peer.ip.empty() || peer.tcp_port == 0) {
@@ -1144,6 +1190,15 @@ bool TerminalUI::is_selected_peer_trusted() {
     }
     std::lock_guard<std::mutex> lock(peers_mutex_);
     return trusted_peers_.count(name) > 0;
+}
+
+std::optional<TerminalUI::PeerInfo> TerminalUI::get_peer_info(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    auto it = peers_.find(peer_name);
+    if (it != peers_.end()) {
+        return it->second;
+    }
+    return std::nullopt;
 }
 
 void TerminalUI::draw_chat() {
@@ -1931,6 +1986,138 @@ bool TerminalUI::handle_identity_popup_key(char32_t ch) {
         case 'o':
         case 'O':
             close_identity_popup();
+            return true;
+    }
+    return false;
+}
+
+void TerminalUI::show_peer_info_popup(const std::string& peer_name,
+                                       const std::vector<std::pair<std::string, std::string>>& entries) {
+    if (showing_peer_info_popup_) {
+        close_peer_info_popup();
+    }
+    showing_peer_info_popup_ = true;
+    peer_info_popup_name_ = peer_name;
+    peer_info_popup_entries_ = entries;
+    peer_info_popup_plane_ = nullptr;
+}
+
+void TerminalUI::close_peer_info_popup() {
+    showing_peer_info_popup_ = false;
+    peer_info_popup_name_.clear();
+    peer_info_popup_entries_.clear();
+    if (peer_info_popup_plane_) {
+        ncplane_destroy(peer_info_popup_plane_);
+        peer_info_popup_plane_ = nullptr;
+    }
+}
+
+void TerminalUI::draw_peer_info_popup() {
+    if (!showing_peer_info_popup_ || !nc_) return;
+
+    unsigned term_rows = 0, term_cols = 0;
+    notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
+
+    const int modal_w = 60;
+    const int entry_count = static_cast<int>(peer_info_popup_entries_.size());
+    const int content_h = std::max(3, entry_count * 2 + 1);
+    const int modal_h = std::min(static_cast<int>(term_rows) - 4, content_h + 6);
+    const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
+    const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
+
+    if (!peer_info_popup_plane_) {
+        peer_info_popup_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "peer_info_popup");
+        if (!peer_info_popup_plane_) return;
+    }
+
+    const uint64_t border_ch = make_channels(0x22, 0xc5, 0x5e, 0x22, 0x12, 0x29);
+    const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x22, 0x12, 0x29);
+    const uint64_t key_ch = make_channels(0xff, 0xaa, 0x44, 0x22, 0x12, 0x29);
+    const uint64_t val_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
+    const uint64_t button_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);
+    const uint32_t bg_color = 0x221229;
+
+    ncplane_erase(peer_info_popup_plane_);
+    uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
+    ncchannels_set_bg_rgb(&ul, bg_color);
+    ncchannels_set_bg_rgb(&ur, bg_color);
+    ncchannels_set_bg_rgb(&ll, bg_color);
+    ncchannels_set_bg_rgb(&lr, bg_color);
+    ncchannels_set_fg_rgb(&ul, bg_color);
+    ncchannels_set_fg_rgb(&ur, bg_color);
+    ncchannels_set_fg_rgb(&ll, bg_color);
+    ncchannels_set_fg_rgb(&lr, bg_color);
+    ncplane_gradient(peer_info_popup_plane_, 0, 0, modal_h, modal_w, " ", 0, ul, ur, ll, lr);
+
+    ncplane_set_channels(peer_info_popup_plane_, border_ch);
+    ncplane_rounded_box_sized(peer_info_popup_plane_, 0, border_ch, modal_h, modal_w, 0);
+
+    std::string title = " Info: " + peer_info_popup_name_ + " ";
+    ncplane_set_channels(peer_info_popup_plane_, title_ch);
+    ncplane_on_styles(peer_info_popup_plane_, NCSTYLE_BOLD);
+    ncplane_putstr_yx(peer_info_popup_plane_, 1, 2, title.c_str());
+    ncplane_off_styles(peer_info_popup_plane_, NCSTYLE_BOLD);
+
+    int y = 3;
+    for (const auto& e : peer_info_popup_entries_) {
+        if (y >= modal_h - 3) break;
+        ncplane_set_channels(peer_info_popup_plane_, key_ch);
+        ncplane_putstr_yx(peer_info_popup_plane_, y, 2, (e.first + ":").c_str());
+        ncplane_set_channels(peer_info_popup_plane_, val_ch);
+        std::string val = e.second;
+        if (static_cast<int>(val.size()) > modal_w - 6) {
+            val = val.substr(0, modal_w - 9) + "...";
+        }
+        ncplane_putstr_yx(peer_info_popup_plane_, y + 1, 4, val.c_str());
+        y += 2;
+    }
+
+    if (peer_info_popup_entries_.empty()) {
+        ncplane_set_channels(peer_info_popup_plane_, val_ch);
+        ncplane_putstr_yx(peer_info_popup_plane_, y, 2, "No info available.");
+    }
+
+    ncplane_set_channels(peer_info_popup_plane_, button_ch);
+    ncplane_putstr_yx(peer_info_popup_plane_, modal_h - 2, (modal_w - 10) / 2, "  [ OK ]  ");
+}
+
+bool TerminalUI::handle_peer_info_popup_click(int abs_y, int abs_x) {
+    if (!showing_peer_info_popup_ || !peer_info_popup_plane_) return false;
+
+    int plane_y = 0, plane_x = 0;
+    ncplane_abs_yx(peer_info_popup_plane_, &plane_y, &plane_x);
+
+    unsigned h = 0, w = 0;
+    ncplane_dim_yx(peer_info_popup_plane_, &h, &w);
+
+    const int rel_y = abs_y - plane_y;
+    const int rel_x = abs_x - plane_x;
+
+    if (rel_y == static_cast<int>(h) - 2 && rel_x >= static_cast<int>(w) / 2 - 5 && rel_x <= static_cast<int>(w) / 2 + 5) {
+        close_peer_info_popup();
+        return true;
+    }
+
+    if (rel_y >= 0 && rel_y < static_cast<int>(h) && rel_x >= 0 && rel_x < static_cast<int>(w)) {
+        return true;
+    }
+
+    return false;
+}
+
+bool TerminalUI::handle_peer_info_popup_key(char32_t ch) {
+    if (!showing_peer_info_popup_) return false;
+
+    switch (ch) {
+        case NCKEY_ENTER:
+        case '\n':
+        case '\r':
+        case 27:  // Escape
+        case 'q':
+        case 'Q':
+        case 'o':
+        case 'O':
+            close_peer_info_popup();
             return true;
     }
     return false;
