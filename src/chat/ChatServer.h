@@ -66,7 +66,6 @@ public:
                    const std::string& ip, uint16_t port, const std::string& content);
     void register_peer(const std::string& peer_name, const std::string& ip);
     void disconnect_peer(const std::string& peer_name);
-    void flush_pending_messages(const std::string& peer_name, const std::string& ip, uint16_t port);
     void set_receive_handler(std::function<void(const std::string&, const std::string&, const std::string&,
                                                 const std::string&, int64_t)> handler);
     void set_delivery_callback(std::function<void(const std::string&, const std::string&, bool)> callback);
@@ -134,16 +133,4 @@ private:
     std::mutex session_keys_mutex_;
     std::unordered_map<std::string, std::string> ip_to_session_key_;
     std::function<void(const std::string&)> logger_;
-
-    // Pending messages queue for offline peers
-    struct PendingMessage {
-        std::string from_user;
-        std::string to_user;
-        std::string content;
-        std::string msg_id;
-        std::string timestamp;
-        int64_t timestamp_ms;
-    };
-    std::mutex pending_mutex_;
-    std::unordered_map<std::string, std::vector<PendingMessage>> pending_messages_;
 };

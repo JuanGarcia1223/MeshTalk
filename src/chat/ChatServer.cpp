@@ -611,9 +611,6 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
         }).detach();
     }
 
-    // Flush any pending messages now that we're connected
-    flush_pending_messages(peer_name, ip, port);
-
     return true;
 }
 
@@ -623,34 +620,16 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
         return false;
     }
 
-    const uint64_t seq = ++msg_counter_;
-    std::string msg_id = from_user + "-" + std::to_string(unix_epoch_ms()) + "-" + std::to_string(seq);
-    int64_t ts_ms = unix_epoch_ms();
-    std::string ts_iso = iso_utc_now();
-
-    // Save to DB as pending before attempting send
-    if (db_) {
-        db_->saveMessage(to_user, true, content, ts_iso, ts_ms, "pending", msg_id);
-    }
-
     if (!connect_to(ip, port, to_user)) {
-        // Queue for later delivery
-        {
-            std::lock_guard<std::mutex> lock(pending_mutex_);
-            pending_messages_[to_user].push_back(
-                PendingMessage{from_user, to_user, content, msg_id, ts_iso, ts_ms});
-        }
-        std::cerr << "chat: peer " << to_user << " offline, message queued\n";
-        return true;  // Message is persisted, will be sent when peer comes online
+        return false;
     }
 
     ChatMessage msg;
-    msg.set_msg_id(msg_id);
     msg.set_from_user(from_user);
     msg.set_to_user(to_user);
     msg.set_content(content);
-    msg.set_timestamp_ms(ts_ms);
-    msg.set_iso_datetime(ts_iso);
+    msg.set_timestamp_ms(unix_epoch_ms());
+    msg.set_iso_datetime(iso_utc_now());
 
     Envelope env;
     env.set_type(Envelope::CHAT);
@@ -658,17 +637,11 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
 
     int fd = get_outbound_fd(ip, port);
     if (fd < 0) {
-        // Queue for later delivery
-        {
-            std::lock_guard<std::mutex> lock(pending_mutex_);
-            pending_messages_[to_user].push_back(
-                PendingMessage{from_user, to_user, content, msg_id, ts_iso, ts_ms});
-        }
-        return true;
+        return false;
     }
 
     if (!send_envelope(fd, env, session_manager_, to_user)) {
-        std::cerr << "chat: send failed to " << to_user << ", queuing for retry\n";
+        std::cerr << "chat: send failed to " << to_user << "\n";
         const std::string key = endpoint_key(ip, port);
         {
             std::lock_guard<std::mutex> lock(outbound_mutex_);
@@ -678,84 +651,12 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
                 outbound_fd_by_endpoint_.erase(it);
             }
         }
-        // Queue for later delivery
-        {
-            std::lock_guard<std::mutex> lock(pending_mutex_);
-            pending_messages_[to_user].push_back(
-                PendingMessage{from_user, to_user, content, msg_id, ts_iso, ts_ms});
-        }
-        return true;
+        return false;
     }
 
-    // Mark as sent in DB
-    if (db_) {
-        db_->updateMessageStatus(msg_id, "sent");
-    }
-
-    std::cout << "chat: sent msg_id=" << env.chat().msg_id() << " to=" << to_user
-              << " at " << ip << ":" << port << " ts=" << env.chat().iso_datetime() << "\n";
+    std::cout << "chat: sent to=" << to_user << " at " << ip << ":" << port
+              << " ts=" << env.chat().iso_datetime() << "\n";
     return true;
-}
-
-void ChatServer::flush_pending_messages(const std::string& peer_name,
-                                         const std::string& ip, uint16_t port) {
-    std::vector<PendingMessage> to_send;
-    {
-        std::lock_guard<std::mutex> lock(pending_mutex_);
-        auto it = pending_messages_.find(peer_name);
-        if (it == pending_messages_.end() || it->second.empty()) {
-            return;
-        }
-        to_send = std::move(it->second);
-        pending_messages_.erase(it);
-    }
-
-    if (!connect_to(ip, port, peer_name)) {
-        // Re-queue all if still can't connect
-        std::lock_guard<std::mutex> lock(pending_mutex_);
-        auto& queue = pending_messages_[peer_name];
-        queue.insert(queue.end(), to_send.begin(), to_send.end());
-        return;
-    }
-
-    int fd = get_outbound_fd(ip, port);
-    if (fd < 0) {
-        std::lock_guard<std::mutex> lock(pending_mutex_);
-        auto& queue = pending_messages_[peer_name];
-        queue.insert(queue.end(), to_send.begin(), to_send.end());
-        return;
-    }
-
-    for (auto& pm : to_send) {
-        ChatMessage msg;
-        msg.set_msg_id(pm.msg_id);
-        msg.set_from_user(pm.from_user);
-        msg.set_to_user(pm.to_user);
-        msg.set_content(pm.content);
-        msg.set_timestamp_ms(pm.timestamp_ms);
-        msg.set_iso_datetime(pm.timestamp);
-
-        Envelope env;
-        env.set_type(Envelope::CHAT);
-        *env.mutable_chat() = std::move(msg);
-
-        if (send_envelope(fd, env, session_manager_, peer_name)) {
-            if (db_) {
-                db_->updateMessageStatus(pm.msg_id, "sent");
-            }
-            std::cout << "chat: flushed queued msg_id=" << pm.msg_id << " to=" << peer_name << "\n";
-        } else {
-            // Re-queue this one and any remaining
-            std::lock_guard<std::mutex> lock(pending_mutex_);
-            auto& queue = pending_messages_[peer_name];
-            queue.push_back(pm);
-            // Also re-queue remaining
-            for (auto it = to_send.begin() + (&pm - to_send.data() + 1); it != to_send.end(); ++it) {
-                queue.push_back(*it);
-            }
-            break;
-        }
-    }
 }
 
 void ChatServer::register_peer(const std::string& peer_name, const std::string& ip) {
