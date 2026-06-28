@@ -41,6 +41,13 @@ struct FileTransferRecord {
     std::string file_data;  // BLOB stored as string for SQLite
 };
 
+struct InfoEntry {
+    int64_t id;
+    std::string key;
+    std::string value;
+    int64_t updated_at;
+};
+
 class DatabaseManager {
 public:
     DatabaseManager(const std::string& username);
@@ -97,6 +104,18 @@ public:
     std::vector<FileTransferRecord> loadFileTransfersForPeer(const std::string& peer_name);
     std::optional<FileTransferRecord> getFileTransfer(const std::string& transfer_id);
     std::string getFileStoragePath() const;
+
+    // Personal info entries (key-value pairs broadcast to peers)
+    bool saveInfoEntry(const std::string& key, const std::string& value);
+    bool deleteInfoEntry(const std::string& key);
+    bool updateInfoEntry(const std::string& key, const std::string& value);
+    std::vector<InfoEntry> loadAllInfoEntries();
+    std::optional<std::string> getInfoEntry(const std::string& key);
+
+    // Peer info cache (info received from other peers)
+    bool savePeerInfo(const std::string& peer_name, const std::string& key, const std::string& value);
+    bool clearPeerInfo(const std::string& peer_name);
+    std::vector<InfoEntry> loadPeerInfo(const std::string& peer_name);
 
 private:
     std::string getDbPath() const;
