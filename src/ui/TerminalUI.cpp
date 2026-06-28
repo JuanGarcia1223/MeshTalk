@@ -1133,7 +1133,14 @@ bool TerminalUI::activate_selected_peer() {
     // If pending, show trust modal and request info
     if (is_pending) {
         std::string fp = peer.fingerprint.empty() ? "UNKNOWN" : peer.fingerprint;
-        show_trust_modal(peer.username, fp);
+        std::vector<std::pair<std::string, std::string>> cached_info;
+        if (db_manager_) {
+            auto entries = db_manager_->loadPeerInfo(peer.username);
+            for (const auto& e : entries) {
+                cached_info.emplace_back(e.key, e.value);
+            }
+        }
+        show_trust_modal(peer.username, fp, cached_info);
         if (peer.ip.empty() || peer.tcp_port == 0) {
             return true;
         }
@@ -1681,13 +1688,15 @@ bool TerminalUI::handle_trust_keypress(char32_t ch) {
     return true;
 }
 
-void TerminalUI::show_trust_modal(const std::string& peer_name, const std::string& fingerprint) {
+void TerminalUI::show_trust_modal(const std::string& peer_name, const std::string& fingerprint,
+                                   const std::vector<std::pair<std::string, std::string>>& info_entries) {
     if (showing_trust_modal_) {
         close_trust_modal();
     }
     showing_trust_modal_ = true;
     trust_modal_peer_ = peer_name;
     trust_modal_fingerprint_ = fingerprint;
+    trust_modal_info_entries_ = info_entries;
     trust_modal_selected_button_ = 0;  // Default to Accept
     trust_modal_plane_ = nullptr;  // Will be created in render
 }
@@ -1696,6 +1705,7 @@ void TerminalUI::close_trust_modal() {
     showing_trust_modal_ = false;
     trust_modal_peer_.clear();
     trust_modal_fingerprint_.clear();
+    trust_modal_info_entries_.clear();
     if (trust_modal_plane_) {
         ncplane_destroy(trust_modal_plane_);
         trust_modal_plane_ = nullptr;
@@ -1709,9 +1719,12 @@ void TerminalUI::draw_trust_modal() {
     unsigned term_rows = 0, term_cols = 0;
     notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
 
-    // Modal dimensions
+    // Calculate modal height based on info entries
     const int modal_w = 60;
-    const int modal_h = 12;
+    const int entry_count = static_cast<int>(trust_modal_info_entries_.size());
+    const int info_h = entry_count > 0 ? (entry_count * 2 + 2) : 0;
+    const int base_h = 12;
+    const int modal_h = std::min(static_cast<int>(term_rows) - 4, base_h + info_h);
     const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
     const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
 
@@ -1726,6 +1739,8 @@ void TerminalUI::draw_trust_modal() {
     const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x22, 0x12, 0x29);
     const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
     const uint64_t dim_ch = make_channels(0x80, 0x80, 0x80, 0x22, 0x12, 0x29);
+    const uint64_t key_ch = make_channels(0xff, 0xaa, 0x44, 0x22, 0x12, 0x29);
+    const uint64_t val_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
     const uint64_t button_selected_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);
     const uint64_t button_unselected_ch = make_channels(0xe2, 0xe8, 0xf0, 0x44, 0x44, 0x44);
     const uint32_t bg_color = 0x221229;
@@ -1764,12 +1779,35 @@ void TerminalUI::draw_trust_modal() {
     ncplane_set_channels(trust_modal_plane_, text_ch);
     ncplane_putstr_yx(trust_modal_plane_, 6, 6, trust_modal_fingerprint_.c_str());
 
+    int y = 8;
+
+    // Info entries
+    if (!trust_modal_info_entries_.empty()) {
+        ncplane_set_channels(trust_modal_plane_, dim_ch);
+        ncplane_putstr_yx(trust_modal_plane_, y, 4, "Info:");
+        y += 1;
+        for (const auto& e : trust_modal_info_entries_) {
+            if (y >= modal_h - 4) break;
+            ncplane_set_channels(trust_modal_plane_, key_ch);
+            ncplane_putstr_yx(trust_modal_plane_, y, 6, (e.first + ":").c_str());
+            ncplane_set_channels(trust_modal_plane_, val_ch);
+            std::string val = e.second;
+            if (static_cast<int>(val.size()) > modal_w - 10) {
+                val = val.substr(0, modal_w - 13) + "...";
+            }
+            ncplane_putstr_yx(trust_modal_plane_, y + 1, 8, val.c_str());
+            y += 2;
+        }
+    }
+
     // Warning
-    ncplane_set_channels(trust_modal_plane_, make_channels(0xff, 0x44, 0x44, 0x22, 0x12, 0x29));
-    ncplane_putstr_yx(trust_modal_plane_, 8, 4, "Verify this fingerprint out-of-band!");
+    if (y < modal_h - 3) {
+        ncplane_set_channels(trust_modal_plane_, make_channels(0xff, 0x44, 0x44, 0x22, 0x12, 0x29));
+        ncplane_putstr_yx(trust_modal_plane_, y, 4, "Verify this fingerprint out-of-band!");
+    }
 
     // Buttons
-    const int button_y = modal_h - 3;
+    const int button_y = modal_h - 2;
     const int accept_x = 12;
     const int reject_x = 35;
 
@@ -1789,6 +1827,19 @@ void TerminalUI::draw_trust_modal() {
     } else {
         ncplane_set_channels(trust_modal_plane_, button_unselected_ch);
         ncplane_putstr_yx(trust_modal_plane_, button_y, reject_x, "  Reject  ");
+    }
+}
+
+bool TerminalUI::is_showing_trust_modal_for(const std::string& peer_name) const {
+    return showing_trust_modal_ && trust_modal_peer_ == peer_name;
+}
+
+void TerminalUI::update_trust_modal_info(const std::vector<std::pair<std::string, std::string>>& entries) {
+    trust_modal_info_entries_ = entries;
+    // Force redraw by destroying the plane so it gets recreated with new dimensions
+    if (trust_modal_plane_) {
+        ncplane_destroy(trust_modal_plane_);
+        trust_modal_plane_ = nullptr;
     }
 }
 
