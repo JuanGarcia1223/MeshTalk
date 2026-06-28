@@ -460,6 +460,103 @@ void ChatServer::handle_delivery_ack(const std::string& from_user, const Deliver
     }
 }
 
+void ChatServer::set_info_received_callback(
+    std::function<void(const std::string&, const std::vector<std::pair<std::string, std::string>>&)> callback) {
+    std::lock_guard<std::mutex> lock(info_callback_mutex_);
+    on_info_received_ = std::move(callback);
+}
+
+bool ChatServer::request_info(const std::string& from_user, const std::string& to_user,
+                              const std::string& ip, uint16_t port) {
+    if (!connect_to(ip, port, to_user)) {
+        return false;
+    }
+
+    InfoRequest req;
+    req.set_from_user(from_user);
+
+    Envelope env;
+    env.set_type(Envelope::INFO_REQUEST);
+    *env.mutable_info_request() = std::move(req);
+
+    int fd = get_outbound_fd(ip, port);
+    if (fd < 0) {
+        return false;
+    }
+
+    if (!send_envelope(fd, env, session_manager_, to_user)) {
+        std::cerr << "chat: info request failed to " << to_user << "\n";
+        return false;
+    }
+
+    std::cout << "chat: sent info request to=" << to_user << "\n";
+    return true;
+}
+
+void ChatServer::handle_info_request(const std::string& from_user, const std::string& ip,
+                                       uint16_t port, const InfoRequest& req) {
+    std::cout << "chat: info request from=" << from_user << "\n";
+
+    if (!db_) {
+        return;
+    }
+
+    auto entries = db_->loadAllInfoEntries();
+    if (entries.empty()) {
+        return;
+    }
+
+    InfoResponse resp;
+    resp.set_from_user(req.from_user());
+    for (const auto& e : entries) {
+        auto* entry = resp.add_entries();
+        entry->set_key(e.key);
+        entry->set_value(e.value);
+    }
+
+    Envelope env;
+    env.set_type(Envelope::INFO_RESPONSE);
+    *env.mutable_info_response() = std::move(resp);
+
+    int fd = get_outbound_fd(ip, port);
+    if (fd < 0) {
+        // Try to connect back
+        if (!connect_to(ip, port, from_user)) {
+            return;
+        }
+        fd = get_outbound_fd(ip, port);
+        if (fd < 0) return;
+    }
+
+    send_envelope(fd, env, session_manager_, from_user);
+    std::cout << "chat: sent info response to=" << from_user << " entries=" << entries.size() << "\n";
+}
+
+void ChatServer::handle_info_response(const std::string& from_user, const InfoResponse& resp) {
+    std::cout << "chat: info response from=" << from_user << " entries=" << resp.entries_size() << "\n";
+
+    if (db_) {
+        db_->clearPeerInfo(from_user);
+        for (const auto& e : resp.entries()) {
+            db_->savePeerInfo(from_user, e.key(), e.value());
+        }
+    }
+
+    std::vector<std::pair<std::string, std::string>> entries;
+    for (const auto& e : resp.entries()) {
+        entries.emplace_back(e.key(), e.value());
+    }
+
+    std::function<void(const std::string&, const std::vector<std::pair<std::string, std::string>>&)> cb;
+    {
+        std::lock_guard<std::mutex> lock(info_callback_mutex_);
+        cb = on_info_received_;
+    }
+    if (cb) {
+        cb(from_user, entries);
+    }
+}
+
 bool ChatServer::start() {
     if (running_) {
         return true;
@@ -858,6 +955,12 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
             }
             case Envelope::DELIVERY_ACK:
                 handle_delivery_ack(from_user, env.delivery_ack());
+                break;
+            case Envelope::INFO_REQUEST:
+                handle_info_request(from_user, peer_ip, peer_port, env.info_request());
+                break;
+            case Envelope::INFO_RESPONSE:
+                handle_info_response(from_user, env.info_response());
                 break;
             default:
                 std::cerr << "chat: unknown envelope type " << env.type() << "\n";

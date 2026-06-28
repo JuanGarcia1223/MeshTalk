@@ -86,6 +86,12 @@ public:
     void cancel_file_transfer(const std::string& transfer_id);
     bool download_file(const std::string& transfer_id, const std::string& download_path);
 
+    // Info request/response
+    bool request_info(const std::string& from_user, const std::string& to_user,
+                      const std::string& ip, uint16_t port);
+    void set_info_received_callback(
+        std::function<void(const std::string& peer_name, const std::vector<std::pair<std::string, std::string>>&)> callback);
+
 private:
     void accept_loop();
     void handle_inbound_connection(int fd, const std::string& peer_ip, uint16_t peer_port);
@@ -104,6 +110,8 @@ private:
     void send_file_response(const std::string& to_user, const std::string& ip, uint16_t port, 
                             const std::string& transfer_id, bool accepted);
     std::string compute_sha256(const std::vector<uint8_t>& data);
+    void handle_info_request(const std::string& from_user, const std::string& ip, uint16_t port, const class InfoRequest& req);
+    void handle_info_response(const std::string& from_user, const class InfoResponse& resp);
 
     int listen_fd_{-1};
     uint16_t port_{0};
@@ -133,4 +141,8 @@ private:
     std::mutex session_keys_mutex_;
     std::unordered_map<std::string, std::string> ip_to_session_key_;
     std::function<void(const std::string&)> logger_;
+
+    // Info request/response
+    std::mutex info_callback_mutex_;
+    std::function<void(const std::string&, const std::vector<std::pair<std::string, std::string>>&)> on_info_received_;
 };
