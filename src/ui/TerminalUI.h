@@ -90,6 +90,16 @@ public:
     bool handle_peer_info_popup_click(int abs_y, int abs_x);
     bool handle_peer_info_popup_key(char32_t ch);
 
+    // Trust modal dialog
+    void show_trust_modal(const std::string& peer_name, const std::string& fingerprint,
+                          const std::vector<std::pair<std::string, std::string>>& info_entries = {});
+    void close_trust_modal();
+    void draw_trust_modal();
+    bool handle_trust_modal_click(int abs_y, int abs_x);
+    bool handle_trust_modal_key(char32_t ch);
+    bool is_showing_trust_modal_for(const std::string& peer_name) const;
+    void update_trust_modal_info(const std::vector<std::pair<std::string, std::string>>& entries);
+
     // Command subsystem
     void draw_command_menu();
     void execute_command(int cmd_idx);
@@ -154,14 +164,7 @@ private:
     bool activate_selected_peer();
     bool is_selected_peer_online();
     bool is_selected_peer_trusted();
-    
-    // Trust modal dialog
-    void show_trust_modal(const std::string& peer_name, const std::string& fingerprint);
-    void close_trust_modal();
-    void draw_trust_modal();
-    bool handle_trust_modal_click(int abs_y, int abs_x);
-    bool handle_trust_modal_key(char32_t ch);
-    
+
     // Old trust prompt (deprecated)
     void draw_trust_prompt();
     bool handle_trust_keypress(char32_t ch);
@@ -224,6 +227,7 @@ private:
     std::string trust_modal_fingerprint_;
     int trust_modal_selected_button_{0};  // 0 = Accept, 1 = Reject
     ncplane* trust_modal_plane_{nullptr};
+    std::vector<std::pair<std::string, std::string>> trust_modal_info_entries_;
 
     // Identity popup state
     bool showing_identity_popup_{false};

@@ -337,7 +337,17 @@ int main(int argc, char** argv) {
     // Set up info request/response callbacks
     chat_server.set_info_received_callback([&ui, &db_manager](const std::string& peer_name,
                                                                const std::vector<std::pair<std::string, std::string>>& entries) {
-        ui.show_peer_info_popup(peer_name, entries);
+        // Save to DB cache
+        db_manager.clearPeerInfo(peer_name);
+        for (const auto& e : entries) {
+            db_manager.savePeerInfo(peer_name, e.first, e.second);
+        }
+        // If trust modal is showing for this peer, update it inline
+        if (ui.is_showing_trust_modal_for(peer_name)) {
+            ui.update_trust_modal_info(entries);
+        } else {
+            ui.show_peer_info_popup(peer_name, entries);
+        }
     });
 
     ui.set_on_request_info([&chat_server, &name, &ui](const std::string& peer_name) {
