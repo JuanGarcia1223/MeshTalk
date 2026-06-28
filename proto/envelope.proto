@@ -12,6 +12,20 @@ message HandshakePayload {
   bytes signature  = 3;  // Ed25519 sig of x25519_pk using ed25519_sk (64 bytes)
 }
 
+message InfoRequest {
+  string from_user = 1;
+}
+
+message InfoEntryMsg {
+  string key = 1;
+  string value = 2;
+}
+
+message InfoResponse {
+  string from_user = 1;
+  repeated InfoEntryMsg entries = 2;
+}
+
 message Envelope {
   enum Type {
     CHAT          = 0;
@@ -20,6 +34,8 @@ message Envelope {
     FILE_COMPLETE = 3;
     HANDSHAKE     = 4;
     DELIVERY_ACK  = 5;
+    INFO_REQUEST  = 6;
+    INFO_RESPONSE = 7;
   }
 
   Type type = 1;
@@ -31,6 +47,8 @@ message Envelope {
     FileComplete     file_complete = 5;
     HandshakePayload handshake     = 6;
     DeliveryAck      delivery_ack  = 7;
+    InfoRequest      info_request  = 8;
+    InfoResponse     info_response = 9;
   }
 
   // v2 E2E fields — leave empty for now

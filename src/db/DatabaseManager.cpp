@@ -161,6 +161,26 @@ bool DatabaseManager::createSchema() {
             );
         )");
 
+        // Personal info entries table (key-value pairs for this user)
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS info_entries (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+        )");
+
+        // Peer info cache table (info received from other peers)
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS peer_info (
+                peer_name TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (peer_name, key)
+            );
+        )");
+
         return true;
     } catch (const std::exception& ex) {
         std::cerr << "db: failed to create schema: " << ex.what() << "\n";
@@ -846,4 +866,128 @@ bool DatabaseManager::markMessagesAsRead(const std::string& peer_name) {
         std::cerr << "db: failed to mark messages as read: " << ex.what() << "\n";
         return false;
     }
+}
+
+bool DatabaseManager::saveInfoEntry(const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT OR REPLACE INTO info_entries (key, value, updated_at) VALUES (?, ?, ?)");
+        insert.bind(1, key);
+        insert.bind(2, value);
+        insert.bind(3, static_cast<int64_t>(std::time(nullptr)));
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to save info entry: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::deleteInfoEntry(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
+    try {
+        SQLite::Statement del(*db_, "DELETE FROM info_entries WHERE key = ?");
+        del.bind(1, key);
+        del.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to delete info entry: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::updateInfoEntry(const std::string& key, const std::string& value) {
+    return saveInfoEntry(key, value);
+}
+
+std::vector<InfoEntry> DatabaseManager::loadAllInfoEntries() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<InfoEntry> entries;
+    if (!db_) return entries;
+    try {
+        SQLite::Statement query(*db_, "SELECT key, value, updated_at FROM info_entries ORDER BY key");
+        while (query.executeStep()) {
+            InfoEntry e;
+            e.id = 0;
+            e.key = query.getColumn(0).getString();
+            e.value = query.getColumn(1).getString();
+            e.updated_at = query.getColumn(2).getInt64();
+            entries.push_back(e);
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to load info entries: " << ex.what() << "\n";
+    }
+    return entries;
+}
+
+std::optional<std::string> DatabaseManager::getInfoEntry(const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+    try {
+        SQLite::Statement query(*db_, "SELECT value FROM info_entries WHERE key = ?");
+        query.bind(1, key);
+        if (query.executeStep()) {
+            return query.getColumn(0).getString();
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to get info entry: " << ex.what() << "\n";
+    }
+    return std::nullopt;
+}
+
+bool DatabaseManager::savePeerInfo(const std::string& peer_name, const std::string& key, const std::string& value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT OR REPLACE INTO peer_info (peer_name, key, value, updated_at) VALUES (?, ?, ?, ?)");
+        insert.bind(1, peer_name);
+        insert.bind(2, key);
+        insert.bind(3, value);
+        insert.bind(4, static_cast<int64_t>(std::time(nullptr)));
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to save peer info: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+bool DatabaseManager::clearPeerInfo(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!db_) return false;
+    try {
+        SQLite::Statement del(*db_, "DELETE FROM peer_info WHERE peer_name = ?");
+        del.bind(1, peer_name);
+        del.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to clear peer info: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+std::vector<InfoEntry> DatabaseManager::loadPeerInfo(const std::string& peer_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<InfoEntry> entries;
+    if (!db_) return entries;
+    try {
+        SQLite::Statement query(*db_,
+            "SELECT key, value, updated_at FROM peer_info WHERE peer_name = ? ORDER BY key");
+        query.bind(1, peer_name);
+        while (query.executeStep()) {
+            InfoEntry e;
+            e.id = 0;
+            e.key = query.getColumn(0).getString();
+            e.value = query.getColumn(1).getString();
+            e.updated_at = query.getColumn(2).getInt64();
+            entries.push_back(e);
+        }
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to load peer info: " << ex.what() << "\n";
+    }
+    return entries;
 }
