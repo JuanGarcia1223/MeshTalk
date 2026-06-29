@@ -222,12 +222,14 @@ private:
     std::string trust_prompt_stored_fingerprint_;
     
     // Trust modal dialog state
+    mutable std::mutex trust_modal_mutex_;
     bool showing_trust_modal_{false};
     std::string trust_modal_peer_;
     std::string trust_modal_fingerprint_;
     int trust_modal_selected_button_{0};  // 0 = Accept, 1 = Reject
     ncplane* trust_modal_plane_{nullptr};
     std::vector<std::pair<std::string, std::string>> trust_modal_info_entries_;
+    bool trust_modal_info_dirty_{false};
 
     // Identity popup state
     bool showing_identity_popup_{false};
@@ -235,10 +237,12 @@ private:
     ncplane* identity_popup_plane_{nullptr};
 
     // Peer info popup state
+    std::mutex peer_info_popup_mutex_;
     bool showing_peer_info_popup_{false};
     std::string peer_info_popup_name_;
     std::vector<std::pair<std::string, std::string>> peer_info_popup_entries_;
     ncplane* peer_info_popup_plane_{nullptr};
+    bool peer_info_popup_needs_recreate_{false};
 
     // Clear chat confirmation modal state
     bool showing_clear_modal_{false};

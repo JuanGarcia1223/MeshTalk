@@ -1685,8 +1685,10 @@ bool TerminalUI::handle_trust_keypress(char32_t ch) {
 
 void TerminalUI::show_trust_modal(const std::string& peer_name, const std::string& fingerprint,
                                    const std::vector<std::pair<std::string, std::string>>& info_entries) {
+    std::lock_guard<std::mutex> lock(trust_modal_mutex_);
     if (showing_trust_modal_) {
-        close_trust_modal();
+        showing_trust_modal_ = false;
+        trust_modal_info_dirty_ = true;
     }
     showing_trust_modal_ = true;
     trust_modal_peer_ = peer_name;
@@ -1694,13 +1696,16 @@ void TerminalUI::show_trust_modal(const std::string& peer_name, const std::strin
     trust_modal_info_entries_ = info_entries;
     trust_modal_selected_button_ = 0;  // Default to Accept
     trust_modal_plane_ = nullptr;  // Will be created in render
+    trust_modal_info_dirty_ = false;
 }
 
 void TerminalUI::close_trust_modal() {
+    std::lock_guard<std::mutex> lock(trust_modal_mutex_);
     showing_trust_modal_ = false;
     trust_modal_peer_.clear();
     trust_modal_fingerprint_.clear();
     trust_modal_info_entries_.clear();
+    trust_modal_info_dirty_ = false;
     if (trust_modal_plane_) {
         ncplane_destroy(trust_modal_plane_);
         trust_modal_plane_ = nullptr;
@@ -1708,6 +1713,7 @@ void TerminalUI::close_trust_modal() {
 }
 
 void TerminalUI::draw_trust_modal() {
+    std::lock_guard<std::mutex> lock(trust_modal_mutex_);
     if (!showing_trust_modal_ || !nc_) return;
 
     // Get terminal dimensions
@@ -1724,8 +1730,12 @@ void TerminalUI::draw_trust_modal() {
     const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
 
     // Create or recreate the modal plane
-    if (!trust_modal_plane_) {
+    if (!trust_modal_plane_ || trust_modal_info_dirty_) {
+        if (trust_modal_plane_) {
+            ncplane_destroy(trust_modal_plane_);
+        }
         trust_modal_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "trust_modal");
+        trust_modal_info_dirty_ = false;
         if (!trust_modal_plane_) return;
     }
 
@@ -1826,19 +1836,19 @@ void TerminalUI::draw_trust_modal() {
 }
 
 bool TerminalUI::is_showing_trust_modal_for(const std::string& peer_name) const {
+    std::lock_guard<std::mutex> lock(trust_modal_mutex_);
     return showing_trust_modal_ && trust_modal_peer_ == peer_name;
 }
 
 void TerminalUI::update_trust_modal_info(const std::vector<std::pair<std::string, std::string>>& entries) {
+    std::lock_guard<std::mutex> lock(trust_modal_mutex_);
     trust_modal_info_entries_ = entries;
-    // Force redraw by destroying the plane so it gets recreated with new dimensions
-    if (trust_modal_plane_) {
-        ncplane_destroy(trust_modal_plane_);
-        trust_modal_plane_ = nullptr;
-    }
+    // Signal main thread to recreate the plane with new dimensions
+    trust_modal_info_dirty_ = true;
 }
 
 bool TerminalUI::handle_trust_modal_click(int abs_y, int abs_x) {
+    std::unique_lock<std::mutex> lock(trust_modal_mutex_);
     if (!showing_trust_modal_ || !trust_modal_plane_) return false;
 
     int plane_y = 0, plane_x = 0;
@@ -1855,18 +1865,39 @@ bool TerminalUI::handle_trust_modal_click(int abs_y, int abs_x) {
 
     // Check Accept button (x: 12-21)
     if (rel_x >= 12 && rel_x <= 21) {
-        if (on_trust_peer_) {
-            on_trust_peer_(trust_modal_peer_);
+        std::string peer = trust_modal_peer_;
+        bool has_callback = (on_trust_peer_ != nullptr);
+        showing_trust_modal_ = false;
+        trust_modal_peer_.clear();
+        trust_modal_fingerprint_.clear();
+        trust_modal_info_entries_.clear();
+        trust_modal_info_dirty_ = false;
+        if (trust_modal_plane_) {
+            ncplane_destroy(trust_modal_plane_);
+            trust_modal_plane_ = nullptr;
         }
-        add_debug("trusted peer: " + trust_modal_peer_);
-        close_trust_modal();
+        lock.unlock();
+        if (has_callback) {
+            on_trust_peer_(peer);
+        }
+        add_debug("trusted peer: " + peer);
         return true;
     }
 
     // Check Reject button (x: 35-44)
     if (rel_x >= 35 && rel_x <= 44) {
-        add_debug("rejected peer: " + trust_modal_peer_);
-        close_trust_modal();
+        std::string peer = trust_modal_peer_;
+        showing_trust_modal_ = false;
+        trust_modal_peer_.clear();
+        trust_modal_fingerprint_.clear();
+        trust_modal_info_entries_.clear();
+        trust_modal_info_dirty_ = false;
+        if (trust_modal_plane_) {
+            ncplane_destroy(trust_modal_plane_);
+            trust_modal_plane_ = nullptr;
+        }
+        lock.unlock();
+        add_debug("rejected peer: " + peer);
         return true;
     }
 
@@ -1874,6 +1905,7 @@ bool TerminalUI::handle_trust_modal_click(int abs_y, int abs_x) {
 }
 
 bool TerminalUI::handle_trust_modal_key(char32_t ch) {
+    std::unique_lock<std::mutex> lock(trust_modal_mutex_);
     if (!showing_trust_modal_) return false;
 
     switch (ch) {
@@ -1883,25 +1915,43 @@ bool TerminalUI::handle_trust_modal_key(char32_t ch) {
             return true;
         case NCKEY_ENTER:
         case '\n':
-        case '\r':
-            if (trust_modal_selected_button_ == 0) {
-                // Accept
-                if (on_trust_peer_) {
-                    on_trust_peer_(trust_modal_peer_);
-                }
-                add_debug("trusted peer: " + trust_modal_peer_);
-            } else {
-                // Reject
-                add_debug("rejected peer: " + trust_modal_peer_);
+        case '\r': {
+            std::string peer = trust_modal_peer_;
+            bool accept = (trust_modal_selected_button_ == 0);
+            bool has_callback = (on_trust_peer_ != nullptr);
+            showing_trust_modal_ = false;
+            trust_modal_peer_.clear();
+            trust_modal_fingerprint_.clear();
+            trust_modal_info_entries_.clear();
+            trust_modal_info_dirty_ = false;
+            if (trust_modal_plane_) {
+                ncplane_destroy(trust_modal_plane_);
+                trust_modal_plane_ = nullptr;
             }
-            close_trust_modal();
+            lock.unlock();
+            if (accept && has_callback) {
+                on_trust_peer_(peer);
+            }
+            add_debug(accept ? "trusted peer: " + peer : "rejected peer: " + peer);
             return true;
+        }
         case 27:  // Escape
         case 'q':
-        case 'Q':
-            add_debug("cancelled trust dialog for: " + trust_modal_peer_);
-            close_trust_modal();
+        case 'Q': {
+            std::string peer = trust_modal_peer_;
+            showing_trust_modal_ = false;
+            trust_modal_peer_.clear();
+            trust_modal_fingerprint_.clear();
+            trust_modal_info_entries_.clear();
+            trust_modal_info_dirty_ = false;
+            if (trust_modal_plane_) {
+                ncplane_destroy(trust_modal_plane_);
+                trust_modal_plane_ = nullptr;
+            }
+            lock.unlock();
+            add_debug("cancelled trust dialog for: " + peer);
             return true;
+        }
     }
     return false;
 }
@@ -2039,8 +2089,11 @@ bool TerminalUI::handle_identity_popup_key(char32_t ch) {
 
 void TerminalUI::show_peer_info_popup(const std::string& peer_name,
                                        const std::vector<std::pair<std::string, std::string>>& entries) {
+    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
     if (showing_peer_info_popup_) {
-        close_peer_info_popup();
+        // Don't destroy plane from network thread; let main thread handle it
+        showing_peer_info_popup_ = false;
+        peer_info_popup_needs_recreate_ = true;
     }
     showing_peer_info_popup_ = true;
     peer_info_popup_name_ = peer_name;
@@ -2049,9 +2102,11 @@ void TerminalUI::show_peer_info_popup(const std::string& peer_name,
 }
 
 void TerminalUI::close_peer_info_popup() {
+    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
     showing_peer_info_popup_ = false;
     peer_info_popup_name_.clear();
     peer_info_popup_entries_.clear();
+    peer_info_popup_needs_recreate_ = false;
     if (peer_info_popup_plane_) {
         ncplane_destroy(peer_info_popup_plane_);
         peer_info_popup_plane_ = nullptr;
@@ -2059,6 +2114,7 @@ void TerminalUI::close_peer_info_popup() {
 }
 
 void TerminalUI::draw_peer_info_popup() {
+    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
     if (!showing_peer_info_popup_ || !nc_) return;
 
     unsigned term_rows = 0, term_cols = 0;
@@ -2071,8 +2127,12 @@ void TerminalUI::draw_peer_info_popup() {
     const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
     const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
 
-    if (!peer_info_popup_plane_) {
+    if (!peer_info_popup_plane_ || peer_info_popup_needs_recreate_) {
+        if (peer_info_popup_plane_) {
+            ncplane_destroy(peer_info_popup_plane_);
+        }
         peer_info_popup_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "peer_info_popup");
+        peer_info_popup_needs_recreate_ = false;
         if (!peer_info_popup_plane_) return;
     }
 
@@ -2128,6 +2188,7 @@ void TerminalUI::draw_peer_info_popup() {
 }
 
 bool TerminalUI::handle_peer_info_popup_click(int abs_y, int abs_x) {
+    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
     if (!showing_peer_info_popup_ || !peer_info_popup_plane_) return false;
 
     int plane_y = 0, plane_x = 0;
@@ -2140,7 +2201,17 @@ bool TerminalUI::handle_peer_info_popup_click(int abs_y, int abs_x) {
     const int rel_x = abs_x - plane_x;
 
     if (rel_y == static_cast<int>(h) - 2 && rel_x >= static_cast<int>(w) / 2 - 5 && rel_x <= static_cast<int>(w) / 2 + 5) {
-        close_peer_info_popup();
+        {
+            std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
+            showing_peer_info_popup_ = false;
+            peer_info_popup_name_.clear();
+            peer_info_popup_entries_.clear();
+            peer_info_popup_needs_recreate_ = false;
+            if (peer_info_popup_plane_) {
+                ncplane_destroy(peer_info_popup_plane_);
+                peer_info_popup_plane_ = nullptr;
+            }
+        }
         return true;
     }
 
@@ -2152,7 +2223,10 @@ bool TerminalUI::handle_peer_info_popup_click(int abs_y, int abs_x) {
 }
 
 bool TerminalUI::handle_peer_info_popup_key(char32_t ch) {
-    if (!showing_peer_info_popup_) return false;
+    {
+        std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
+        if (!showing_peer_info_popup_) return false;
+    }
 
     switch (ch) {
         case NCKEY_ENTER:
