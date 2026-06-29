@@ -646,7 +646,8 @@ void TerminalUI::render() {
     }
 
     // Draw peer info popup on top if showing
-    if (showing_peer_info_popup_) {
+    if (showing_peer_info_popup_.load()) {
+        add_debug("RENDER: drawing peer info popup for " + peer_info_popup_name_ + " entries=" + std::to_string(peer_info_popup_entries_.size()));
         draw_peer_info_popup();
     }
 
@@ -1546,12 +1547,14 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
         if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
             active_name = people_rows_[selected_peer_index_].username;
         }
+        add_debug("INFO: requesting info for peer=" + active_name);
         if (active_name == "self") {
             add_debug("INFO: cannot request info from self");
         } else if (on_request_info_) {
+            add_debug("INFO: calling on_request_info_ callback");
             on_request_info_(active_name);
         } else {
-            add_debug("INFO: info request not available");
+            add_debug("INFO: info request not available (no callback)");
         }
     } else if (cmd == "/CLEAR") {
         std::string active_name = "self";
@@ -2090,15 +2093,14 @@ bool TerminalUI::handle_identity_popup_key(char32_t ch) {
 void TerminalUI::show_peer_info_popup(const std::string& peer_name,
                                        const std::vector<std::pair<std::string, std::string>>& entries) {
     std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-    if (showing_peer_info_popup_) {
-        // Don't destroy plane from network thread; let main thread handle it
-        showing_peer_info_popup_ = false;
+    add_debug("show_peer_info_popup: peer=" + peer_name + " entries=" + std::to_string(entries.size()));
+    // If already showing, just update data and signal recreate. Never toggle showing_ off.
+    if (showing_peer_info_popup_.load()) {
         peer_info_popup_needs_recreate_ = true;
     }
     showing_peer_info_popup_ = true;
     peer_info_popup_name_ = peer_name;
     peer_info_popup_entries_ = entries;
-    peer_info_popup_plane_ = nullptr;
 }
 
 void TerminalUI::close_peer_info_popup() {
@@ -2115,7 +2117,9 @@ void TerminalUI::close_peer_info_popup() {
 
 void TerminalUI::draw_peer_info_popup() {
     std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-    if (!showing_peer_info_popup_ || !nc_) return;
+    if (!showing_peer_info_popup_ || !nc_) {
+        return;
+    }
 
     unsigned term_rows = 0, term_cols = 0;
     notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
