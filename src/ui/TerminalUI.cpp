@@ -356,29 +356,6 @@ void TerminalUI::run() {
             break;
         }
 
-        // Handle Ctrl+Shift+D to show own public key
-        if (key_action &&
-            (input == static_cast<uint32_t>('d') || input == static_cast<uint32_t>('D')) &&
-            (ncinput_ctrl_p(&in) || in.ctrl) && (ncinput_shift_p(&in) || in.shift)) {
-            if (on_show_identity_) {
-                on_show_identity_();
-            }
-            continue;  // Don't add 'D' to input buffer
-        }
-
-        // Handle Ctrl+Shift+I to request info from selected peer
-        if (key_action &&
-            (input == static_cast<uint32_t>('i') || input == static_cast<uint32_t>('I')) &&
-            (ncinput_ctrl_p(&in) || in.ctrl) && (ncinput_shift_p(&in) || in.shift)) {
-            if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
-                const std::string peer_name = people_rows_[selected_peer_index_].username;
-                if (peer_name != "self" && on_request_info_) {
-                    on_request_info_(peer_name);
-                }
-            }
-            continue;
-        }
-
         // Arrow keys scroll chat history
         if (key_action && input == NCKEY_UP) {
             ++chat_scroll_offset_;
@@ -1519,7 +1496,7 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
     if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
         peer_name = people_rows_[selected_peer_index_].username;
     }
-    if (!peer_online && peer_name != "self" && cmd != "/DOWNLOAD" && cmd != "/STATUS" && cmd != "/CLEAR") {
+    if (!peer_online && peer_name != "self" && cmd != "/DOWNLOAD" && cmd != "/STATUS" && cmd != "/CLEAR" && cmd != "/INFO") {
         show_alert_popup("Unable to send: " + peer_name + " is offline");
         return;
     }
@@ -1558,6 +1535,24 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
         bool online = is_selected_peer_online();
         bool trusted = is_selected_peer_trusted();
         add_debug("Peer: " + active_name + " | Online: " + (online ? "yes" : "no") + " | Trusted: " + (trusted ? "yes" : "no"));
+    } else if (cmd == "/SELFKEY") {
+        if (on_show_identity_) {
+            on_show_identity_();
+        } else {
+            add_debug("SELFKEY: identity display not available");
+        }
+    } else if (cmd == "/INFO") {
+        std::string active_name = "self";
+        if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {
+            active_name = people_rows_[selected_peer_index_].username;
+        }
+        if (active_name == "self") {
+            add_debug("INFO: cannot request info from self");
+        } else if (on_request_info_) {
+            on_request_info_(active_name);
+        } else {
+            add_debug("INFO: info request not available");
+        }
     } else if (cmd == "/CLEAR") {
         std::string active_name = "self";
         if (selected_peer_index_ >= 0 && selected_peer_index_ < static_cast<int>(people_rows_.size())) {

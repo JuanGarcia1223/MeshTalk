@@ -301,6 +301,8 @@ private:
         {"/HI", "Send hello message"},
         {"/BYE", "Send goodbye message"},
         {"/STATUS", "Show peer status"},
+        {"/SELFKEY", "Show own public key"},
+        {"/INFO", "Fetch peer info"},
         {"/CLEAR", "Clear chat history"},
         {"/UPLOAD", "Upload a file"},
         {"/DOWNLOAD", "Download received files"}
