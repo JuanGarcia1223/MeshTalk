@@ -162,6 +162,8 @@ void UdpHelloBroadcaster::run_broadcast_loop() {
         if (!send_hello()) {
             std::cerr << "failed to send HELLO broadcast\n";
         }
+        // Also send unicast to loopback so multiple instances on same machine discover each other
+        send_hello_unicast("127.0.0.1");
         for (int i = 0; i < 50 && running_; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
@@ -255,6 +257,42 @@ bool UdpHelloBroadcaster::send_packet(DiscoveryPacket::Type type) {
 
 bool UdpHelloBroadcaster::send_hello() {
     return send_packet(DiscoveryPacket::HELLO);
+}
+
+bool UdpHelloBroadcaster::send_hello_unicast(const std::string& ip) {
+    DiscoveryPacket pkt;
+    pkt.set_type(DiscoveryPacket::HELLO);
+    pkt.set_username(username_);
+    pkt.set_ip(payload_ip_);
+    pkt.set_tcp_port(tcp_port_);
+    pkt.set_timestamp(unix_epoch_ms());
+    if (!identity_pk_.empty()) {
+        pkt.set_identity_pk(identity_pk_.data(), identity_pk_.size());
+    }
+
+    std::string payload;
+    if (!pkt.SerializeToString(&payload)) {
+        return false;
+    }
+
+    sockaddr_in dst{};
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(udp_port_);
+    if (inet_pton(AF_INET, ip.c_str(), &dst.sin_addr) != 1) {
+        return false;
+    }
+
+    const ssize_t sent = sendto(send_sockfd_, payload.data(), payload.size(), 0,
+                                reinterpret_cast<sockaddr*>(&dst), sizeof(dst));
+    if (sent < 0) {
+        return false;
+    }
+
+    if (debug_logs_) {
+        std::cout << "unicast HELLO to " << ip << " username=" << username_ << " ip=" << payload_ip_
+                  << " tcp_port=" << tcp_port_ << "\n";
+    }
+    return true;
 }
 
 void UdpHelloBroadcaster::send_bye() {

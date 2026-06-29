@@ -32,6 +32,7 @@ private:
     void run_broadcast_loop();
     void run_receive_loop();
     bool send_hello();
+    bool send_hello_unicast(const std::string& ip);
     bool send_packet(DiscoveryPacket::Type type);
 
     std::string username_;
