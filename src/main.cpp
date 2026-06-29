@@ -337,6 +337,7 @@ int main(int argc, char** argv) {
     // Set up info request/response callbacks
     chat_server.set_info_received_callback([&ui, &db_manager](const std::string& peer_name,
                                                                const std::vector<std::pair<std::string, std::string>>& entries) {
+        ui.add_debug("INFO: received response from " + peer_name + " entries=" + std::to_string(entries.size()));
         // Save to DB cache
         db_manager.clearPeerInfo(peer_name);
         for (const auto& e : entries) {
@@ -344,14 +345,17 @@ int main(int argc, char** argv) {
         }
         // If trust modal is showing for this peer, update it inline
         if (ui.is_showing_trust_modal_for(peer_name)) {
+            ui.add_debug("INFO: updating trust modal for " + peer_name);
             ui.update_trust_modal_info(entries);
         } else {
+            ui.add_debug("INFO: showing peer info popup for " + peer_name);
             ui.show_peer_info_popup(peer_name, entries);
         }
     });
 
     ui.set_on_request_info([&chat_server, &name, &ui](const std::string& peer_name) {
         // Look up peer IP and port from UI
+        ui.add_debug("INFO: on_request_info callback for " + peer_name);
         auto peer_opt = ui.get_peer_info(peer_name);
         if (!peer_opt) {
             ui.add_debug("Cannot request info: peer " + peer_name + " not found");
@@ -362,7 +366,7 @@ int main(int argc, char** argv) {
             ui.add_debug("Cannot request info: peer " + peer_name + " is offline");
             return;
         }
-        ui.add_debug("Requesting info from " + peer_name);
+        ui.add_debug("INFO: calling chat_server.request_info for " + peer_name + " at " + peer.ip + ":" + std::to_string(peer.tcp_port));
         chat_server.request_info(name, peer_name, peer.ip, peer.tcp_port);
     });
 

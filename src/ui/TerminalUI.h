@@ -223,7 +223,7 @@ private:
     
     // Trust modal dialog state
     mutable std::mutex trust_modal_mutex_;
-    bool showing_trust_modal_{false};
+    std::atomic<bool> showing_trust_modal_{false};
     std::string trust_modal_peer_;
     std::string trust_modal_fingerprint_;
     int trust_modal_selected_button_{0};  // 0 = Accept, 1 = Reject
@@ -238,7 +238,7 @@ private:
 
     // Peer info popup state
     std::mutex peer_info_popup_mutex_;
-    bool showing_peer_info_popup_{false};
+    std::atomic<bool> showing_peer_info_popup_{false};
     std::string peer_info_popup_name_;
     std::vector<std::pair<std::string, std::string>> peer_info_popup_entries_;
     ncplane* peer_info_popup_plane_{nullptr};
