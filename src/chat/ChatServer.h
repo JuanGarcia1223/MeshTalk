@@ -110,7 +110,7 @@ private:
     void send_file_response(const std::string& to_user, const std::string& ip, uint16_t port, 
                             const std::string& transfer_id, bool accepted);
     std::string compute_sha256(const std::vector<uint8_t>& data);
-    void handle_info_request(const std::string& from_user, const std::string& ip, uint16_t port, const class InfoRequest& req);
+    void handle_info_request(int reply_fd, const std::string& from_user, const std::string& ip, uint16_t port, const class InfoRequest& req);
     void handle_info_response(const std::string& from_user, const class InfoResponse& resp);
 
     int listen_fd_{-1};
