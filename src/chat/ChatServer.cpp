@@ -474,6 +474,7 @@ bool ChatServer::request_info(const std::string& from_user, const std::string& t
 
     InfoRequest req;
     req.set_from_user(from_user);
+    req.set_requester_tcp_port(port_);
 
     Envelope env;
     env.set_type(Envelope::INFO_REQUEST);
@@ -495,7 +496,7 @@ bool ChatServer::request_info(const std::string& from_user, const std::string& t
 
 void ChatServer::handle_info_request(int reply_fd, const std::string& from_user, const std::string& ip,
                                        uint16_t port, const InfoRequest& req) {
-    std::cout << "chat: info request from=" << from_user << "\n";
+    std::cout << "chat: info request from=" << from_user << " req_port=" << req.requester_tcp_port() << "\n";
 
     InfoResponse resp;
     resp.set_from_user(req.from_user());
@@ -513,7 +514,30 @@ void ChatServer::handle_info_request(int reply_fd, const std::string& from_user,
     env.set_type(Envelope::INFO_RESPONSE);
     *env.mutable_info_response() = std::move(resp);
 
-    send_envelope(reply_fd, env, session_manager_, from_user);
+    // Send response on outbound connection to requester so they receive it on their inbound socket
+    uint16_t requester_port = static_cast<uint16_t>(req.requester_tcp_port());
+    if (requester_port == 0) {
+        // Fallback: try to send on the inbound socket (won't work for most architectures)
+        send_envelope(reply_fd, env, session_manager_, from_user);
+        std::cout << "chat: sent info response (fallback inbound) to=" << from_user << " entries=" << resp.entries_size() << "\n";
+        return;
+    }
+
+    if (!connect_to(ip, requester_port, from_user)) {
+        std::cerr << "chat: failed to connect back to " << from_user << " at " << ip << ":" << requester_port << " for info response\n";
+        return;
+    }
+
+    int fd = get_outbound_fd(ip, requester_port);
+    if (fd < 0) {
+        std::cerr << "chat: no outbound fd for info response to " << from_user << "\n";
+        return;
+    }
+
+    if (!send_envelope(fd, env, session_manager_, from_user)) {
+        std::cerr << "chat: failed to send info response to " << from_user << "\n";
+        return;
+    }
     std::cout << "chat: sent info response to=" << from_user << " entries=" << resp.entries_size() << "\n";
 }
 
