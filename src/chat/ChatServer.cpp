@@ -497,21 +497,16 @@ void ChatServer::handle_info_request(const std::string& from_user, const std::st
                                        uint16_t port, const InfoRequest& req) {
     std::cout << "chat: info request from=" << from_user << "\n";
 
-    if (!db_) {
-        return;
-    }
-
-    auto entries = db_->loadAllInfoEntries();
-    if (entries.empty()) {
-        return;
-    }
-
     InfoResponse resp;
     resp.set_from_user(req.from_user());
-    for (const auto& e : entries) {
-        auto* entry = resp.add_entries();
-        entry->set_key(e.key);
-        entry->set_value(e.value);
+
+    if (db_) {
+        auto entries = db_->loadAllInfoEntries();
+        for (const auto& e : entries) {
+            auto* entry = resp.add_entries();
+            entry->set_key(e.key);
+            entry->set_value(e.value);
+        }
     }
 
     Envelope env;
@@ -529,7 +524,7 @@ void ChatServer::handle_info_request(const std::string& from_user, const std::st
     }
 
     send_envelope(fd, env, session_manager_, from_user);
-    std::cout << "chat: sent info response to=" << from_user << " entries=" << entries.size() << "\n";
+    std::cout << "chat: sent info response to=" << from_user << " entries=" << resp.entries_size() << "\n";
 }
 
 void ChatServer::handle_info_response(const std::string& from_user, const InfoResponse& resp) {
