@@ -545,17 +545,10 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
         return;
     }
 
-    // Check if peer is trusted before saving to database
-    bool is_trusted = false;
-    {
-        std::lock_guard<std::mutex> lock(peers_mutex_);
-        is_trusted = (peer_name == "self") || (trusted_peers_.count(peer_name) > 0);
-    }
-
-    // Only save to database for trusted peers
-    if (db_manager_ && is_trusted) {
+    // Save all messages to database (including pending peers)
+    if (db_manager_) {
         db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms,
-                                 sender ? "sent" : "unread");
+                                 sender ? "sent" : "delivered");
     }
 
     // Increment unread count for received messages from non-selected peers
@@ -590,16 +583,10 @@ void TerminalUI::add_attachment_message(const std::string& peer_name, bool sende
     // Format attachment message with paperclip emoji
     std::string content = "📎 Attachment: " + filename + " (" + std::to_string((file_size + 1023) / 1024) + " KB)";
 
-    // Check if peer is trusted before saving to database
-    bool is_trusted = false;
-    {
-        std::lock_guard<std::mutex> lock(peers_mutex_);
-        is_trusted = (peer_name == "self") || (trusted_peers_.count(peer_name) > 0);
-    }
-
-    // Only save to database for trusted peers
-    if (db_manager_ && is_trusted) {
-        db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms);
+    // Save all messages to database (including pending peers)
+    if (db_manager_) {
+        db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms,
+                                 sender ? "sent" : "delivered");
     }
 
     std::lock_guard<std::mutex> lock(chat_mutex_);
@@ -1860,7 +1847,7 @@ bool TerminalUI::handle_trust_modal_click(int abs_y, int abs_x) {
     unsigned h = 0, w = 0;
     ncplane_dim_yx(trust_modal_plane_, &h, &w);
 
-    const int button_y = static_cast<int>(h) - 3;
+    const int button_y = static_cast<int>(h) - 2;
     const int rel_y = abs_y - plane_y;
     const int rel_x = abs_x - plane_x;
 

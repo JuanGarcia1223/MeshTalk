@@ -858,7 +858,7 @@ bool DatabaseManager::markMessagesAsRead(const std::string& peer_name) {
 
     try {
         SQLite::Statement update(*db_,
-            "UPDATE messages SET status = 'read' WHERE peer_name = ? AND status = 'unread'");
+            "UPDATE messages SET status = 'read' WHERE peer_name = ? AND status = 'delivered'");
         update.bind(1, peer_name);
         update.exec();
         return true;

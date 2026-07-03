@@ -493,7 +493,7 @@ bool ChatServer::request_info(const std::string& from_user, const std::string& t
     return true;
 }
 
-void ChatServer::handle_info_request(const std::string& from_user, const std::string& ip,
+void ChatServer::handle_info_request(int reply_fd, const std::string& from_user, const std::string& ip,
                                        uint16_t port, const InfoRequest& req) {
     std::cout << "chat: info request from=" << from_user << "\n";
 
@@ -513,17 +513,7 @@ void ChatServer::handle_info_request(const std::string& from_user, const std::st
     env.set_type(Envelope::INFO_RESPONSE);
     *env.mutable_info_response() = std::move(resp);
 
-    int fd = get_outbound_fd(ip, port);
-    if (fd < 0) {
-        // Try to connect back
-        if (!connect_to(ip, port, from_user)) {
-            return;
-        }
-        fd = get_outbound_fd(ip, port);
-        if (fd < 0) return;
-    }
-
-    send_envelope(fd, env, session_manager_, from_user);
+    send_envelope(reply_fd, env, session_manager_, from_user);
     std::cout << "chat: sent info response to=" << from_user << " entries=" << resp.entries_size() << "\n";
 }
 
@@ -952,7 +942,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 handle_delivery_ack(from_user, env.delivery_ack());
                 break;
             case Envelope::INFO_REQUEST:
-                handle_info_request(from_user, peer_ip, peer_port, env.info_request());
+                handle_info_request(fd, from_user, peer_ip, peer_port, env.info_request());
                 break;
             case Envelope::INFO_RESPONSE:
                 handle_info_response(from_user, env.info_response());
