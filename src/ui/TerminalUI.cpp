@@ -2113,8 +2113,8 @@ void TerminalUI::draw_peer_info_popup() {
 
     const int modal_w = 60;
     const int entry_count = static_cast<int>(peer_info_popup_entries_.size());
-    const int content_h = std::max(3, entry_count * 2 + 1);
-    const int modal_h = std::min(static_cast<int>(term_rows) - 4, content_h + 6);
+    const int content_h = std::max(3, entry_count + 1);
+    const int modal_h = std::min(static_cast<int>(term_rows) - 4, content_h + 5);
     const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
     const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
 
@@ -2157,16 +2157,14 @@ void TerminalUI::draw_peer_info_popup() {
 
     int y = 3;
     for (const auto& e : peer_info_popup_entries_) {
-        if (y >= modal_h - 3) break;
-        ncplane_set_channels(peer_info_popup_plane_, key_ch);
-        ncplane_putstr_yx(peer_info_popup_plane_, y, 2, (e.first + ":").c_str());
-        ncplane_set_channels(peer_info_popup_plane_, val_ch);
-        std::string val = e.second;
-        if (static_cast<int>(val.size()) > modal_w - 6) {
-            val = val.substr(0, modal_w - 9) + "...";
+        if (y >= modal_h - 2) break;
+        std::string line = e.first + ": " + e.second;
+        if (static_cast<int>(line.size()) > modal_w - 4) {
+            line = line.substr(0, modal_w - 7) + "...";
         }
-        ncplane_putstr_yx(peer_info_popup_plane_, y + 1, 4, val.c_str());
-        y += 2;
+        ncplane_set_channels(peer_info_popup_plane_, val_ch);
+        ncplane_putstr_yx(peer_info_popup_plane_, y, 2, line.c_str());
+        y += 1;
     }
 
     if (peer_info_popup_entries_.empty()) {
@@ -2192,16 +2190,13 @@ bool TerminalUI::handle_peer_info_popup_click(int abs_y, int abs_x) {
     const int rel_x = abs_x - plane_x;
 
     if (rel_y == static_cast<int>(h) - 2 && rel_x >= static_cast<int>(w) / 2 - 5 && rel_x <= static_cast<int>(w) / 2 + 5) {
-        {
-            std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-            showing_peer_info_popup_ = false;
-            peer_info_popup_name_.clear();
-            peer_info_popup_entries_.clear();
-            peer_info_popup_needs_recreate_ = false;
-            if (peer_info_popup_plane_) {
-                ncplane_destroy(peer_info_popup_plane_);
-                peer_info_popup_plane_ = nullptr;
-            }
+        showing_peer_info_popup_ = false;
+        peer_info_popup_name_.clear();
+        peer_info_popup_entries_.clear();
+        peer_info_popup_needs_recreate_ = false;
+        if (peer_info_popup_plane_) {
+            ncplane_destroy(peer_info_popup_plane_);
+            peer_info_popup_plane_ = nullptr;
         }
         return true;
     }
@@ -2227,9 +2222,18 @@ bool TerminalUI::handle_peer_info_popup_key(char32_t ch) {
         case 'q':
         case 'Q':
         case 'o':
-        case 'O':
-            close_peer_info_popup();
+        case 'O': {
+            std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
+            showing_peer_info_popup_ = false;
+            peer_info_popup_name_.clear();
+            peer_info_popup_entries_.clear();
+            peer_info_popup_needs_recreate_ = false;
+            if (peer_info_popup_plane_) {
+                ncplane_destroy(peer_info_popup_plane_);
+                peer_info_popup_plane_ = nullptr;
+            }
             return true;
+        }
     }
     return false;
 }
