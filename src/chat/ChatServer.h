@@ -62,12 +62,12 @@ public:
     bool start();
     void stop();
     bool connect_to(const std::string& ip, uint16_t port, const std::string& peer_name);
-    bool send_chat(const std::string& from_user, const std::string& to_user,
-                   const std::string& ip, uint16_t port, const std::string& content);
+    std::string send_chat(const std::string& from_user, const std::string& to_user,
+                          const std::string& ip, uint16_t port, const std::string& content);
     void register_peer(const std::string& peer_name, const std::string& ip);
     void disconnect_peer(const std::string& peer_name);
     void set_receive_handler(std::function<void(const std::string&, const std::string&, const std::string&,
-                                                const std::string&, int64_t)> handler);
+                                                const std::string&, int64_t, const std::string&)> handler);
     void set_delivery_callback(std::function<void(const std::string&, const std::string&, bool)> callback);
 
     uint16_t port() const { return port_; }
@@ -123,7 +123,8 @@ private:
     std::unordered_map<std::string, int> outbound_fd_by_endpoint_;
     std::atomic<uint64_t> msg_counter_{0};
     std::mutex receive_handler_mutex_;
-    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)>
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t,
+                       const std::string&)>
         on_receive_;
     std::mutex delivery_callback_mutex_;
     std::function<void(const std::string&, const std::string&, bool)> on_delivery_;

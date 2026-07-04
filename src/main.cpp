@@ -421,12 +421,15 @@ int main(int argc, char** argv) {
             udp_debug);
     chat_server.set_receive_handler([&ui, &name](const std::string& from_user, const std::string& to_user,
                                                   const std::string& content, const std::string& datetime,
-                                                  int64_t timestamp_ms) {
+                                                  int64_t timestamp_ms, const std::string& msg_id) {
         if (to_user != name) {
             return;
         }
         const std::string display_time = datetime.empty() ? TerminalUI::local_datetime_now() : datetime;
-        ui.add_chat_message(from_user, false, content, display_time, timestamp_ms);
+        ui.add_chat_message(from_user, false, content, display_time, timestamp_ms, msg_id, "delivered");
+    });
+    chat_server.set_delivery_callback([&ui](const std::string& from_user, const std::string& msg_id, bool success) {
+        ui.handle_delivery_ack(from_user, msg_id, success);
     });
     if (!broadcaster.start()) {
         chat_server.stop();

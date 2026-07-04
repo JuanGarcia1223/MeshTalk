@@ -33,11 +33,13 @@ public:
         bool sender{false};
         std::string content;
         std::string datetime;
+        std::string msg_id;
+        std::string status;  // "pending", "sent", "delivered", "read"
     };
 
     TerminalUI(bool debug_mode, std::string self_name,
                std::function<void(const PeerInfo&)> on_peer_activate = {},
-               std::function<bool(const PeerInfo&, const std::string&)> on_send_chat = {},
+               std::function<std::string(const PeerInfo&, const std::string&)> on_send_chat = {},
                std::function<void(const std::string&)> on_peer_offline = {});
     ~TerminalUI();
 
@@ -62,7 +64,9 @@ public:
                            const std::string& stored_fingerprint);
     void add_chat_message(const std::string& peer_name, bool sender,
                           const std::string& content, const std::string& datetime,
-                          int64_t timestamp_ms = 0);
+                          int64_t timestamp_ms = 0, const std::string& msg_id = "",
+                          const std::string& status = "");
+    void handle_delivery_ack(const std::string& peer_name, const std::string& msg_id, bool success);
 
     // Trust handling
     void set_on_trust_callback(std::function<void(const std::string&)> callback) { on_trust_peer_ = callback; }
@@ -74,6 +78,9 @@ public:
     // File transfer callbacks
     void set_on_upload_file(std::function<bool(const std::string&, const std::string&, const std::string&, uint16_t)> callback) { on_upload_file_ = callback; }
     void set_on_download_file(std::function<bool(const std::string&, const std::string&)> callback) { on_download_file_ = callback; }
+
+    // Delivery callback
+    void set_on_delivery(std::function<void(const std::string&, const std::string&)> callback) { on_delivery_ = callback; }
 
     // Identity popup (also used for peer info display)
     void show_identity_popup(const std::string& fingerprint,
@@ -130,7 +137,9 @@ public:
     // Attachment display
     void add_attachment_message(const std::string& peer_name, bool sender,
                                 const std::string& filename, uint64_t file_size,
-                                const std::string& datetime, int64_t timestamp_ms);
+                                const std::string& datetime, int64_t timestamp_ms,
+                                const std::string& msg_id = "",
+                                const std::string& status = "");
 
     // Utility
     static std::string local_datetime_now();
@@ -174,7 +183,7 @@ private:
 
     std::string self_name_;
     std::function<void(const PeerInfo&)> on_peer_activate_;
-    std::function<bool(const PeerInfo&, const std::string&)> on_send_chat_;
+    std::function<std::string(const PeerInfo&, const std::string&)> on_send_chat_;
 
     FILE* tty_fp_{nullptr};
     notcurses* nc_{nullptr};
@@ -302,4 +311,11 @@ private:
 
     std::mutex chat_mutex_;
     std::map<std::string, std::vector<ChatItem>> chats_by_peer_;
+
+    // Pending delivery acks (msg_id -> peer_name)
+    std::mutex pending_acks_mutex_;
+    std::unordered_map<std::string, std::string> pending_acks_;
+
+    // Delivery callback
+    std::function<void(const std::string&, const std::string&)> on_delivery_;
 };

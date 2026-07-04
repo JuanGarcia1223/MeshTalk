@@ -73,7 +73,7 @@ std::string TerminalUI::local_datetime_now() {
 
 TerminalUI::TerminalUI(bool debug_mode, std::string self_name,
                        std::function<void(const PeerInfo&)> on_peer_activate,
-                       std::function<bool(const PeerInfo&, const std::string&)> on_send_chat,
+                       std::function<std::string(const PeerInfo&, const std::string&)> on_send_chat,
                        std::function<void(const std::string&)> on_peer_offline)
     : debug_mode_(debug_mode),
       self_name_(std::move(self_name)),
@@ -106,7 +106,7 @@ bool TerminalUI::initDatabase() {
     for (const auto& record : records) {
         std::lock_guard<std::mutex> lock(chat_mutex_);
         auto& thread = chats_by_peer_[record.peer_name];
-        thread.push_back(ChatItem{record.is_sender, record.content, normalize_datetime_display(record.timestamp)});
+        thread.push_back(ChatItem{record.is_sender, record.content, normalize_datetime_display(record.timestamp), record.msg_id, record.status});
         if (thread.size() > 2000) {
             thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
         }
@@ -371,8 +371,13 @@ void TerminalUI::run() {
                 } else if (!is_selected_peer_online()) {
                     show_alert_popup("Unable to send: " + peer.username + " is offline");
                 } else if (on_send_chat_) {
-                    if (on_send_chat_(peer, text)) {
-                        add_chat_message(peer.username, true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
+                    std::string msg_id = on_send_chat_(peer, text);
+                    if (!msg_id.empty()) {
+                        add_chat_message(peer.username, true, text, local_datetime_now(), TerminalUI::unix_epoch_ms_now(), msg_id, "pending");
+                        {
+                            std::lock_guard<std::mutex> lock(pending_acks_mutex_);
+                            pending_acks_[msg_id] = peer.username;
+                        }
                     }
                 }
                 input_buffer_.clear();
@@ -524,7 +529,8 @@ void TerminalUI::show_key_mismatch(const std::string& name, const std::string& n
 
 void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
                                   const std::string& content, const std::string& datetime,
-                                  int64_t timestamp_ms) {
+                                  int64_t timestamp_ms, const std::string& msg_id,
+                                  const std::string& status) {
     if (peer_name.empty() || content.empty()) {
         return;
     }
@@ -532,7 +538,7 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
     // Save all messages to database (including pending peers)
     if (db_manager_) {
         db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms,
-                                 sender ? "sent" : "delivered");
+                                 status.empty() ? (sender ? "sent" : "delivered") : status, msg_id);
     }
 
     // Increment unread count for received messages from non-selected peers
@@ -551,7 +557,7 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
 
     std::lock_guard<std::mutex> lock(chat_mutex_);
     auto& thread = chats_by_peer_[peer_name];
-    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime)});
+    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime), msg_id, status});
     if (thread.size() > 2000) {
         thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
     }
@@ -559,7 +565,8 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
 
 void TerminalUI::add_attachment_message(const std::string& peer_name, bool sender,
                                         const std::string& filename, uint64_t file_size,
-                                        const std::string& datetime, int64_t timestamp_ms) {
+                                        const std::string& datetime, int64_t timestamp_ms,
+                                        const std::string& msg_id, const std::string& status) {
     if (peer_name.empty() || filename.empty()) {
         return;
     }
@@ -570,14 +577,37 @@ void TerminalUI::add_attachment_message(const std::string& peer_name, bool sende
     // Save all messages to database (including pending peers)
     if (db_manager_) {
         db_manager_->saveMessage(peer_name, sender, content, datetime, timestamp_ms,
-                                 sender ? "sent" : "delivered");
+                                 status.empty() ? (sender ? "sent" : "delivered") : status, msg_id);
     }
 
     std::lock_guard<std::mutex> lock(chat_mutex_);
     auto& thread = chats_by_peer_[peer_name];
-    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime)});
+    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime), msg_id, status});
     if (thread.size() > 2000) {
         thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
+    }
+}
+
+void TerminalUI::handle_delivery_ack(const std::string& peer_name, const std::string& msg_id, bool success) {
+    {
+        std::lock_guard<std::mutex> lock(pending_acks_mutex_);
+        pending_acks_.erase(msg_id);
+    }
+    if (db_manager_) {
+        db_manager_->updateMessageStatus(msg_id, success ? "delivered" : "failed");
+    }
+    // Update the message status in memory
+    {
+        std::lock_guard<std::mutex> lock(chat_mutex_);
+        auto it = chats_by_peer_.find(peer_name);
+        if (it != chats_by_peer_.end()) {
+            for (auto& item : it->second) {
+                if (item.msg_id == msg_id) {
+                    item.status = success ? "delivered" : "failed";
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -1203,6 +1233,7 @@ void TerminalUI::draw_chat() {
         bool sender{false};
         std::string left;
         std::string right;
+        bool pending{false};
     };
 
     std::vector<ChatItem> items;
@@ -1246,10 +1277,12 @@ void TerminalUI::draw_chat() {
             text_lines.push_back(prefix);
         }
 
+        bool is_pending = msg.sender && msg.status == "pending";
         for (size_t i = 0; i < text_lines.size(); ++i) {
             VisualLine line;
             line.sender = msg.sender;
             line.left = text_lines[i];
+            line.pending = is_pending;
             if (i == 0 && inline_dt) {
                 line.right = msg.datetime;
             }
@@ -1257,7 +1290,7 @@ void TerminalUI::draw_chat() {
         }
 
         if (!inline_dt && !msg.datetime.empty()) {
-            visual.push_back(VisualLine{msg.sender, "", msg.datetime});
+            visual.push_back(VisualLine{msg.sender, "", msg.datetime, is_pending});
         }
     }
 
@@ -1279,6 +1312,7 @@ void TerminalUI::draw_chat() {
     }
 
     const uint64_t warning_yellow_ch = make_channels(0xff, 0xff, 0x00, 0x0f, 0x17, 0x2a);  // Yellow for warning
+    const uint64_t pending_red_ch = make_channels(0xff, 0xff, 0xff, 0xff, 0x44, 0x44);  // White text on red bg for pending S:
 
     int y = chat_top;
     for (int i = start; i < static_cast<int>(visual.size()) && y <= chat_bottom; ++i, ++y) {
@@ -1311,9 +1345,16 @@ void TerminalUI::draw_chat() {
                 // Draw warning symbol in yellow
                 ncplane_set_channels(chat_plane_, warning_yellow_ch);
                 ncplane_putstr_yx(chat_plane_, y, 1, "⚠");
-                // Draw rest in sender color (⚠ = 3 bytes, so "S: " starts at byte 3)
-                ncplane_set_channels(chat_plane_, sender_ch);
-                ncplane_putstr_yx(chat_plane_, y, 4, left.substr(3).c_str());
+                // Draw S: with red background if pending, else sender color
+                if (vl.pending) {
+                    ncplane_set_channels(chat_plane_, pending_red_ch);
+                    ncplane_putstr_yx(chat_plane_, y, 4, "S:");
+                    ncplane_set_channels(chat_plane_, sender_ch);
+                    ncplane_putstr_yx(chat_plane_, y, 6, left.substr(5).c_str());
+                } else {
+                    ncplane_set_channels(chat_plane_, sender_ch);
+                    ncplane_putstr_yx(chat_plane_, y, 4, left.substr(3).c_str());
+                }
             } else if (!peer_trusted && left.size() >= 6 && left.substr(0, 6) == "⚠R: ") {
                 // Draw warning symbol in yellow
                 ncplane_set_channels(chat_plane_, warning_yellow_ch);
@@ -1321,6 +1362,12 @@ void TerminalUI::draw_chat() {
                 // Draw rest in receiver color (⚠ = 3 bytes, so "R: " starts at byte 3)
                 ncplane_set_channels(chat_plane_, receiver_ch);
                 ncplane_putstr_yx(chat_plane_, y, 4, left.substr(3).c_str());
+            } else if (vl.pending && left.size() >= 3 && left.substr(0, 3) == "S: ") {
+                // Draw S: with red background for pending messages
+                ncplane_set_channels(chat_plane_, pending_red_ch);
+                ncplane_putstr_yx(chat_plane_, y, 1, "S:");
+                ncplane_set_channels(chat_plane_, sender_ch);
+                ncplane_putstr_yx(chat_plane_, y, 3, left.substr(3).c_str());
             } else {
                 ncplane_putstr_yx(chat_plane_, y, 1, left.c_str());
             }
@@ -1475,8 +1522,13 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
             if (peer.username == "self") {
                 add_chat_message("self", true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
             } else if (on_send_chat_) {
-                if (on_send_chat_(peer, msg)) {
-                    add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
+                std::string msg_id = on_send_chat_(peer, msg);
+                if (!msg_id.empty()) {
+                    add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now(), msg_id, "pending");
+                    {
+                        std::lock_guard<std::mutex> lock(pending_acks_mutex_);
+                        pending_acks_[msg_id] = peer.username;
+                    }
                 }
             }
         }
@@ -1487,8 +1539,13 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
             if (peer.username == "self") {
                 add_chat_message("self", true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
             } else if (on_send_chat_) {
-                if (on_send_chat_(peer, msg)) {
-                    add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now());
+                std::string msg_id = on_send_chat_(peer, msg);
+                if (!msg_id.empty()) {
+                    add_chat_message(peer.username, true, msg, local_datetime_now(), TerminalUI::unix_epoch_ms_now(), msg_id, "pending");
+                    {
+                        std::lock_guard<std::mutex> lock(pending_acks_mutex_);
+                        pending_acks_[msg_id] = peer.username;
+                    }
                 }
             }
         }

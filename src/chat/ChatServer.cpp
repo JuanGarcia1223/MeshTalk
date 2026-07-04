@@ -409,13 +409,14 @@ void ChatServer::handle_chat_message(const std::string& from_user, const ChatMes
               << " ts=" << msg.iso_datetime()
               << " content=\"" << msg.content() << "\"\n";
 
-    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)> cb;
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t,
+                       const std::string&)> cb;
     {
         std::lock_guard<std::mutex> lock(receive_handler_mutex_);
         cb = on_receive_;
     }
     if (cb) {
-        cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms());
+        cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms(), msg.msg_id());
     }
 
     // Send delivery acknowledgment back to sender
@@ -720,17 +721,22 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
     return true;
 }
 
-bool ChatServer::send_chat(const std::string& from_user, const std::string& to_user,
-                           const std::string& ip, uint16_t port, const std::string& content) {
+std::string ChatServer::send_chat(const std::string& from_user, const std::string& to_user,
+                                  const std::string& ip, uint16_t port, const std::string& content) {
     if (content.empty()) {
-        return false;
+        return "";
     }
 
     if (!connect_to(ip, port, to_user)) {
-        return false;
+        return "";
     }
 
+    // Generate unique msg_id
+    static std::atomic<uint64_t> msg_counter{0};
+    std::string msg_id = from_user + "-" + std::to_string(unix_epoch_ms()) + "-" + std::to_string(msg_counter++);
+
     ChatMessage msg;
+    msg.set_msg_id(msg_id);
     msg.set_from_user(from_user);
     msg.set_to_user(to_user);
     msg.set_content(content);
@@ -743,7 +749,7 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
 
     int fd = get_outbound_fd(ip, port);
     if (fd < 0) {
-        return false;
+        return "";
     }
 
     if (!send_envelope(fd, env, session_manager_, to_user)) {
@@ -757,12 +763,12 @@ bool ChatServer::send_chat(const std::string& from_user, const std::string& to_u
                 outbound_fd_by_endpoint_.erase(it);
             }
         }
-        return false;
+        return "";
     }
 
     std::cout << "chat: sent to=" << to_user << " at " << ip << ":" << port
-              << " ts=" << env.chat().iso_datetime() << "\n";
-    return true;
+              << " msg_id=" << msg_id << " ts=" << env.chat().iso_datetime() << "\n";
+    return msg_id;
 }
 
 void ChatServer::register_peer(const std::string& peer_name, const std::string& ip) {
@@ -818,7 +824,8 @@ void ChatServer::disconnect_peer(const std::string& peer_name) {
 }
 
 void ChatServer::set_receive_handler(
-    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t)>
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, int64_t,
+                       const std::string&)>
         handler) {
     std::lock_guard<std::mutex> lock(receive_handler_mutex_);
     on_receive_ = std::move(handler);
