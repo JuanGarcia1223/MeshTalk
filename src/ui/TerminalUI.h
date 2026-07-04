@@ -75,20 +75,14 @@ public:
     void set_on_upload_file(std::function<bool(const std::string&, const std::string&, const std::string&, uint16_t)> callback) { on_upload_file_ = callback; }
     void set_on_download_file(std::function<bool(const std::string&, const std::string&)> callback) { on_download_file_ = callback; }
 
-    // Identity popup
-    void show_identity_popup(const std::string& fingerprint);
+    // Identity popup (also used for peer info display)
+    void show_identity_popup(const std::string& fingerprint,
+                             const std::string& peer_name = "",
+                             const std::vector<std::pair<std::string, std::string>>& entries = {});
     void close_identity_popup();
     void draw_identity_popup();
     bool handle_identity_popup_click(int abs_y, int abs_x);
     bool handle_identity_popup_key(char32_t ch);
-
-    // Peer info popup
-    void show_peer_info_popup(const std::string& peer_name,
-                              const std::vector<std::pair<std::string, std::string>>& entries);
-    void close_peer_info_popup();
-    void draw_peer_info_popup();
-    bool handle_peer_info_popup_click(int abs_y, int abs_x);
-    bool handle_peer_info_popup_key(char32_t ch);
 
     // Trust modal dialog
     void show_trust_modal(const std::string& peer_name, const std::string& fingerprint,
@@ -231,18 +225,12 @@ private:
     std::vector<std::pair<std::string, std::string>> trust_modal_info_entries_;
     bool trust_modal_info_dirty_{false};
 
-    // Identity popup state
+    // Identity popup state (also used for peer info display)
     bool showing_identity_popup_{false};
     std::string identity_popup_fingerprint_;
+    std::string identity_popup_peer_name_;
+    std::vector<std::pair<std::string, std::string>> identity_popup_entries_;
     ncplane* identity_popup_plane_{nullptr};
-
-    // Peer info popup state
-    std::mutex peer_info_popup_mutex_;
-    std::atomic<bool> showing_peer_info_popup_{false};
-    std::string peer_info_popup_name_;
-    std::vector<std::pair<std::string, std::string>> peer_info_popup_entries_;
-    ncplane* peer_info_popup_plane_{nullptr};
-    bool peer_info_popup_needs_recreate_{false};
 
     // Clear chat confirmation modal state
     bool showing_clear_modal_{false};
