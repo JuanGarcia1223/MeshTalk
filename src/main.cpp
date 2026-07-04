@@ -348,8 +348,8 @@ int main(int argc, char** argv) {
             ui.add_debug("INFO: updating trust modal for " + peer_name);
             ui.update_trust_modal_info(entries);
         } else {
-            ui.add_debug("INFO: showing peer info popup for " + peer_name);
-            ui.show_peer_info_popup(peer_name, entries);
+            ui.add_debug("INFO: showing identity popup for " + peer_name);
+            ui.show_identity_popup("", peer_name, entries);
         }
     });
 

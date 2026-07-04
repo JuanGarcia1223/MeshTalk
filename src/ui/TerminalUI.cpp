@@ -233,22 +233,6 @@ void TerminalUI::run() {
             continue;
         }
 
-        // Handle peer info popup (it blocks other inputs)
-        if (showing_peer_info_popup_) {
-            if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
-                (in.evtype == NCTYPE_PRESS || in.evtype == NCTYPE_UNKNOWN)) {
-                if (handle_peer_info_popup_click(in.y, in.x)) {
-                    render();
-                    continue;
-                }
-            } else if (key_action && handle_peer_info_popup_key(static_cast<char32_t>(input))) {
-                render();
-                continue;
-            }
-            render();
-            continue;
-        }
-
         // Handle clear modal (it blocks other inputs)
         if (showing_clear_modal_) {
             if (nckey_mouse_p(input) && input == NCKEY_BUTTON1 &&
@@ -630,12 +614,6 @@ void TerminalUI::render() {
     // Draw identity popup on top if showing
     if (showing_identity_popup_) {
         draw_identity_popup();
-    }
-
-    // Draw peer info popup on top if showing
-    if (showing_peer_info_popup_.load()) {
-        add_debug("RENDER: drawing peer info popup for " + peer_info_popup_name_ + " entries=" + std::to_string(peer_info_popup_entries_.size()));
-        draw_peer_info_popup();
     }
 
     // Draw clear modal on top if showing
@@ -1946,18 +1924,24 @@ bool TerminalUI::handle_trust_modal_key(char32_t ch) {
     return false;
 }
 
-void TerminalUI::show_identity_popup(const std::string& fingerprint) {
+void TerminalUI::show_identity_popup(const std::string& fingerprint,
+                                      const std::string& peer_name,
+                                      const std::vector<std::pair<std::string, std::string>>& entries) {
     if (showing_identity_popup_) {
         close_identity_popup();
     }
     showing_identity_popup_ = true;
     identity_popup_fingerprint_ = fingerprint;
+    identity_popup_peer_name_ = peer_name;
+    identity_popup_entries_ = entries;
     identity_popup_plane_ = nullptr;
 }
 
 void TerminalUI::close_identity_popup() {
     showing_identity_popup_ = false;
     identity_popup_fingerprint_.clear();
+    identity_popup_peer_name_.clear();
+    identity_popup_entries_.clear();
     if (identity_popup_plane_) {
         ncplane_destroy(identity_popup_plane_);
         identity_popup_plane_ = nullptr;
@@ -1971,9 +1955,11 @@ void TerminalUI::draw_identity_popup() {
     unsigned term_rows = 0, term_cols = 0;
     notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
 
-    // Modal dimensions
-    const int modal_w = 50;
-    const int modal_h = 8;
+    const bool is_peer_info = !identity_popup_peer_name_.empty();
+    const int modal_w = 60;
+    const int entry_count = static_cast<int>(identity_popup_entries_.size());
+    const int content_h = is_peer_info ? std::max(3, entry_count + 3) : 5;
+    const int modal_h = std::min(static_cast<int>(term_rows) - 4, content_h + 6);
     const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
     const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
 
@@ -1989,6 +1975,8 @@ void TerminalUI::draw_identity_popup() {
     const uint64_t text_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
     const uint64_t fp_ch = make_channels(0xff, 0xff, 0x00, 0x22, 0x12, 0x29);  // Yellow fingerprint
     const uint64_t button_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);  // Green button
+    const uint64_t key_ch = make_channels(0xff, 0xaa, 0x44, 0x22, 0x12, 0x29);
+    const uint64_t val_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
     const uint32_t bg_color = 0x221229;
 
     // Clear and fill background
@@ -2011,21 +1999,47 @@ void TerminalUI::draw_identity_popup() {
     // Title
     ncplane_set_channels(identity_popup_plane_, title_ch);
     ncplane_on_styles(identity_popup_plane_, NCSTYLE_BOLD);
-    ncplane_putstr_yx(identity_popup_plane_, 1, 2, " Your Public Key Fingerprint ");
+    if (is_peer_info) {
+        std::string title = " Info: " + identity_popup_peer_name_ + " ";
+        ncplane_putstr_yx(identity_popup_plane_, 1, 2, title.c_str());
+    } else {
+        ncplane_putstr_yx(identity_popup_plane_, 1, 2, " Your Public Key Fingerprint ");
+    }
     ncplane_off_styles(identity_popup_plane_, NCSTYLE_BOLD);
 
-    // Fingerprint (centered)
-    ncplane_set_channels(identity_popup_plane_, fp_ch);
-    int fp_x = (modal_w - static_cast<int>(identity_popup_fingerprint_.size())) / 2;
-    if (fp_x < 2) fp_x = 2;
-    ncplane_putstr_yx(identity_popup_plane_, 3, fp_x, identity_popup_fingerprint_.c_str());
-
-    // Instruction
-    ncplane_set_channels(identity_popup_plane_, text_ch);
-    std::string instr = "Share this with others to verify your identity";
-    int instr_x = (modal_w - static_cast<int>(instr.size())) / 2;
-    if (instr_x < 2) instr_x = 2;
-    ncplane_putstr_yx(identity_popup_plane_, 5, instr_x, instr.c_str());
+    int y = 3;
+    if (!identity_popup_fingerprint_.empty()) {
+        // Fingerprint (centered)
+        ncplane_set_channels(identity_popup_plane_, fp_ch);
+        int fp_x = (modal_w - static_cast<int>(identity_popup_fingerprint_.size())) / 2;
+        if (fp_x < 2) fp_x = 2;
+        ncplane_putstr_yx(identity_popup_plane_, y, fp_x, identity_popup_fingerprint_.c_str());
+        y = 5;
+    }
+    if (is_peer_info) {
+        // Info entries below fingerprint
+        for (const auto& e : identity_popup_entries_) {
+            if (y >= modal_h - 2) break;
+            std::string line = e.first + ": " + e.second;
+            if (static_cast<int>(line.size()) > modal_w - 4) {
+                line = line.substr(0, modal_w - 7) + "...";
+            }
+            ncplane_set_channels(identity_popup_plane_, val_ch);
+            ncplane_putstr_yx(identity_popup_plane_, y, 2, line.c_str());
+            y += 1;
+        }
+        if (identity_popup_entries_.empty()) {
+            ncplane_set_channels(identity_popup_plane_, val_ch);
+            ncplane_putstr_yx(identity_popup_plane_, y, 2, "No info available.");
+        }
+    } else {
+        // Instruction for self-key popup
+        ncplane_set_channels(identity_popup_plane_, text_ch);
+        std::string instr = "Share this with others to verify your identity";
+        int instr_x = (modal_w - static_cast<int>(instr.size())) / 2;
+        if (instr_x < 2) instr_x = 2;
+        ncplane_putstr_yx(identity_popup_plane_, y, instr_x, instr.c_str());
+    }
 
     // OK button (centered at bottom)
     ncplane_set_channels(identity_popup_plane_, button_ch);
@@ -2073,167 +2087,6 @@ bool TerminalUI::handle_identity_popup_key(char32_t ch) {
         case 'O':
             close_identity_popup();
             return true;
-    }
-    return false;
-}
-
-void TerminalUI::show_peer_info_popup(const std::string& peer_name,
-                                       const std::vector<std::pair<std::string, std::string>>& entries) {
-    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-    add_debug("show_peer_info_popup: peer=" + peer_name + " entries=" + std::to_string(entries.size()));
-    // If already showing, just update data and signal recreate. Never toggle showing_ off.
-    if (showing_peer_info_popup_.load()) {
-        peer_info_popup_needs_recreate_ = true;
-    }
-    showing_peer_info_popup_ = true;
-    peer_info_popup_name_ = peer_name;
-    peer_info_popup_entries_ = entries;
-}
-
-void TerminalUI::close_peer_info_popup() {
-    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-    showing_peer_info_popup_ = false;
-    peer_info_popup_name_.clear();
-    peer_info_popup_entries_.clear();
-    peer_info_popup_needs_recreate_ = false;
-    if (peer_info_popup_plane_) {
-        ncplane_destroy(peer_info_popup_plane_);
-        peer_info_popup_plane_ = nullptr;
-    }
-}
-
-void TerminalUI::draw_peer_info_popup() {
-    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-    if (!showing_peer_info_popup_ || !nc_) {
-        return;
-    }
-
-    unsigned term_rows = 0, term_cols = 0;
-    notcurses_term_dim_yx(nc_, &term_rows, &term_cols);
-
-    const int modal_w = 60;
-    const int entry_count = static_cast<int>(peer_info_popup_entries_.size());
-    const int content_h = std::max(3, entry_count + 1);
-    const int modal_h = std::min(static_cast<int>(term_rows) - 4, content_h + 5);
-    const int modal_x = (static_cast<int>(term_cols) - modal_w) / 2;
-    const int modal_y = (static_cast<int>(term_rows) - modal_h) / 2;
-
-    if (!peer_info_popup_plane_ || peer_info_popup_needs_recreate_) {
-        if (peer_info_popup_plane_) {
-            ncplane_destroy(peer_info_popup_plane_);
-        }
-        peer_info_popup_plane_ = make_plane(modal_y, modal_x, modal_h, modal_w, "peer_info_popup");
-        peer_info_popup_needs_recreate_ = false;
-        if (!peer_info_popup_plane_) return;
-    }
-
-    const uint64_t border_ch = make_channels(0x22, 0xc5, 0x5e, 0x22, 0x12, 0x29);
-    const uint64_t title_ch = make_channels(0xff, 0xff, 0xff, 0x22, 0x12, 0x29);
-    const uint64_t key_ch = make_channels(0xff, 0xaa, 0x44, 0x22, 0x12, 0x29);
-    const uint64_t val_ch = make_channels(0xe2, 0xe8, 0xf0, 0x22, 0x12, 0x29);
-    const uint64_t button_ch = make_channels(0x00, 0x00, 0x00, 0x22, 0xc5, 0x5e);
-    const uint32_t bg_color = 0x221229;
-
-    ncplane_erase(peer_info_popup_plane_);
-    uint64_t ul = 0, ur = 0, ll = 0, lr = 0;
-    ncchannels_set_bg_rgb(&ul, bg_color);
-    ncchannels_set_bg_rgb(&ur, bg_color);
-    ncchannels_set_bg_rgb(&ll, bg_color);
-    ncchannels_set_bg_rgb(&lr, bg_color);
-    ncchannels_set_fg_rgb(&ul, bg_color);
-    ncchannels_set_fg_rgb(&ur, bg_color);
-    ncchannels_set_fg_rgb(&ll, bg_color);
-    ncchannels_set_fg_rgb(&lr, bg_color);
-    ncplane_gradient(peer_info_popup_plane_, 0, 0, modal_h, modal_w, " ", 0, ul, ur, ll, lr);
-
-    ncplane_set_channels(peer_info_popup_plane_, border_ch);
-    ncplane_rounded_box_sized(peer_info_popup_plane_, 0, border_ch, modal_h, modal_w, 0);
-
-    std::string title = " Info: " + peer_info_popup_name_ + " ";
-    ncplane_set_channels(peer_info_popup_plane_, title_ch);
-    ncplane_on_styles(peer_info_popup_plane_, NCSTYLE_BOLD);
-    ncplane_putstr_yx(peer_info_popup_plane_, 1, 2, title.c_str());
-    ncplane_off_styles(peer_info_popup_plane_, NCSTYLE_BOLD);
-
-    int y = 3;
-    for (const auto& e : peer_info_popup_entries_) {
-        if (y >= modal_h - 2) break;
-        std::string line = e.first + ": " + e.second;
-        if (static_cast<int>(line.size()) > modal_w - 4) {
-            line = line.substr(0, modal_w - 7) + "...";
-        }
-        ncplane_set_channels(peer_info_popup_plane_, val_ch);
-        ncplane_putstr_yx(peer_info_popup_plane_, y, 2, line.c_str());
-        y += 1;
-    }
-
-    if (peer_info_popup_entries_.empty()) {
-        ncplane_set_channels(peer_info_popup_plane_, val_ch);
-        ncplane_putstr_yx(peer_info_popup_plane_, y, 2, "No info available.");
-    }
-
-    ncplane_set_channels(peer_info_popup_plane_, button_ch);
-    ncplane_putstr_yx(peer_info_popup_plane_, modal_h - 2, (modal_w - 10) / 2, "  [ OK ]  ");
-}
-
-bool TerminalUI::handle_peer_info_popup_click(int abs_y, int abs_x) {
-    std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-    if (!showing_peer_info_popup_ || !peer_info_popup_plane_) return false;
-
-    int plane_y = 0, plane_x = 0;
-    ncplane_abs_yx(peer_info_popup_plane_, &plane_y, &plane_x);
-
-    unsigned h = 0, w = 0;
-    ncplane_dim_yx(peer_info_popup_plane_, &h, &w);
-
-    const int rel_y = abs_y - plane_y;
-    const int rel_x = abs_x - plane_x;
-
-    if (rel_y == static_cast<int>(h) - 2 && rel_x >= static_cast<int>(w) / 2 - 5 && rel_x <= static_cast<int>(w) / 2 + 5) {
-        showing_peer_info_popup_ = false;
-        peer_info_popup_name_.clear();
-        peer_info_popup_entries_.clear();
-        peer_info_popup_needs_recreate_ = false;
-        if (peer_info_popup_plane_) {
-            ncplane_destroy(peer_info_popup_plane_);
-            peer_info_popup_plane_ = nullptr;
-        }
-        return true;
-    }
-
-    if (rel_y >= 0 && rel_y < static_cast<int>(h) && rel_x >= 0 && rel_x < static_cast<int>(w)) {
-        return true;
-    }
-
-    return false;
-}
-
-bool TerminalUI::handle_peer_info_popup_key(char32_t ch) {
-    {
-        std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-        if (!showing_peer_info_popup_) return false;
-    }
-
-    switch (ch) {
-        case NCKEY_ENTER:
-        case '\n':
-        case '\r':
-        case 27:  // Escape
-        case 'q':
-        case 'Q':
-        case 'o':
-        case 'O': {
-            std::lock_guard<std::mutex> lock(peer_info_popup_mutex_);
-            showing_peer_info_popup_ = false;
-            peer_info_popup_name_.clear();
-            peer_info_popup_entries_.clear();
-            peer_info_popup_needs_recreate_ = false;
-            if (peer_info_popup_plane_) {
-                ncplane_destroy(peer_info_popup_plane_);
-                peer_info_popup_plane_ = nullptr;
-            }
-            return true;
-        }
     }
     return false;
 }
