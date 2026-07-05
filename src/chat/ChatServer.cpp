@@ -402,7 +402,7 @@ int ChatServer::get_outbound_fd(const std::string& ip, uint16_t port) {
     return (it != outbound_fd_by_endpoint_.end()) ? it->second : -1;
 }
 
-void ChatServer::handle_chat_message(const std::string& from_user, const ChatMessage& msg) {
+void ChatServer::handle_chat_message(const std::string& from_user, const ChatMessage& msg, int reply_fd) {
     std::cout << "chat: recv from=" << msg.from_user()
               << " to=" << msg.to_user()
               << " msg_id=" << msg.msg_id()
@@ -419,30 +419,14 @@ void ChatServer::handle_chat_message(const std::string& from_user, const ChatMes
         cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms(), msg.msg_id());
     }
 
-    // Send delivery acknowledgment back to sender
-    // Find the fd for this peer
-    std::string peer_ip;
-    {
-        std::lock_guard<std::mutex> lock(peers_mutex_);
-        for (const auto& kv : name_by_ip_) {
-            if (kv.second == from_user) {
-                peer_ip = kv.first;
-                break;
-            }
-        }
-    }
-    if (!peer_ip.empty()) {
-        for (const auto& kv : outbound_fd_by_endpoint_) {
-            if (kv.first.find(peer_ip) == 0) {
-                Envelope ack_env;
-                ack_env.set_type(Envelope::DELIVERY_ACK);
-                DeliveryAck ack;
-                ack.set_msg_id(msg.msg_id());
-                *ack_env.mutable_delivery_ack() = std::move(ack);
-                send_envelope(kv.second, ack_env, session_manager_, from_user);
-                break;
-            }
-        }
+    // Send delivery acknowledgment back to sender on the same connection
+    if (reply_fd >= 0) {
+        Envelope ack_env;
+        ack_env.set_type(Envelope::DELIVERY_ACK);
+        DeliveryAck ack;
+        ack.set_msg_id(msg.msg_id());
+        *ack_env.mutable_delivery_ack() = std::move(ack);
+        send_envelope(reply_fd, ack_env, session_manager_, from_user);
     }
 }
 
@@ -938,7 +922,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
 
         switch (env.type()) {
             case Envelope::CHAT:
-                handle_chat_message(from_user, env.chat());
+                handle_chat_message(from_user, env.chat(), fd);
                 break;
             case Envelope::FILE_OFFER:
                 handle_file_offer(from_user, peer_ip, peer_port, env.file_offer());
@@ -958,22 +942,8 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
 
                 // A new inbound handshake means the peer wants a fresh session.
-                // Clear any stale session and old outbound connections so both
-                // sides converge on the same ephemeral keys.
+                // Clear the old session so we derive a new shared secret.
                 session_manager_->clearSession(session_key);
-                {
-                    std::lock_guard<std::mutex> lock(outbound_mutex_);
-                    const std::string ip_prefix = peer_ip + ":";
-                    for (auto it = outbound_fd_by_endpoint_.begin();
-                         it != outbound_fd_by_endpoint_.end();) {
-                        if (it->first.find(ip_prefix) == 0) {
-                            close(it->second);
-                            it = outbound_fd_by_endpoint_.erase(it);
-                        } else {
-                            ++it;
-                        }
-                    }
-                }
                 session_manager_->initSession(session_key, false);
                 bool ok = session_manager_->processHandshake(session_key, their_ed25519, their_x25519, sig);
                 if (!ok) {
