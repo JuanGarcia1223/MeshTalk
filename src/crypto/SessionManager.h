@@ -53,6 +53,10 @@ public:
     bool weInitiated(const std::string& peer_name) const;
     bool hasSession(const std::string& peer_name) const;
 
+    // Alias an existing session so it can be looked up by a different key
+    // (e.g. when peer name is discovered after session was keyed by IP)
+    void aliasSession(const std::string& from_key, const std::string& to_key);
+
     void set_logger(std::function<void(const std::string&)> fn) { logger_ = std::move(fn); }
 
 private:

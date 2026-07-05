@@ -686,7 +686,8 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
     }
 
     // Initiator: send handshake and spawn a thread to read the response.
-    if (session_manager_) {
+    // Only do this if we don't already have a session for this peer.
+    if (session_manager_ && !session_manager_->hasSession(peer_name)) {
         session_manager_->initSession(peer_name, true);
         auto payload = session_manager_->buildHandshakePayload(peer_name);
         if (!payload.empty()) {
@@ -775,8 +776,19 @@ void ChatServer::register_peer(const std::string& peer_name, const std::string& 
     if (peer_name.empty() || ip.empty()) {
         return;
     }
-    std::lock_guard<std::mutex> lock(peers_mutex_);
-    name_by_ip_[ip] = peer_name;
+    {
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        name_by_ip_[ip] = peer_name;
+    }
+    // If a session was created keyed by IP before we knew the peer name,
+    // alias it so both the IP and the peer name resolve to the same session.
+    if (session_manager_ && session_manager_->hasSession(ip)) {
+        session_manager_->aliasSession(ip, peer_name);
+        {
+            std::lock_guard<std::mutex> lock(session_keys_mutex_);
+            ip_to_session_key_[ip] = peer_name;
+        }
+    }
 }
 
 void ChatServer::disconnect_peer(const std::string& peer_name) {
@@ -952,9 +964,10 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                     std::cerr << "chat: handshake verification FAILED for " << from_user << "\n";
                     return;
                 }
-                // Lock in the session key for this IP so later messages
-                // use the same key even if discovery renames the peer.
-                {
+                // Only lock in the session key if we resolved an actual peer name.
+                // If we only have the IP, leave the mapping open so discovery
+                // can later provide the name and alias the session.
+                if (session_key != peer_ip) {
                     std::lock_guard<std::mutex> lock(session_keys_mutex_);
                     ip_to_session_key_[peer_ip] = session_key;
                 }

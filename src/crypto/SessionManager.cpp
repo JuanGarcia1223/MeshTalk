@@ -244,3 +244,11 @@ bool SessionManager::weInitiated(const std::string& peer_name) const {
 bool SessionManager::hasSession(const std::string& peer_name) const {
     return sessions_.count(peer_name) > 0;
 }
+
+void SessionManager::aliasSession(const std::string& from_key, const std::string& to_key) {
+    auto it = sessions_.find(from_key);
+    if (it != sessions_.end()) {
+        sessions_[to_key] = it->second;
+        log("Aliased session from " + from_key + " to " + to_key);
+    }
+}
