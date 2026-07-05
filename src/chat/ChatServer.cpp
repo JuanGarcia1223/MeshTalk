@@ -402,7 +402,8 @@ int ChatServer::get_outbound_fd(const std::string& ip, uint16_t port) {
     return (it != outbound_fd_by_endpoint_.end()) ? it->second : -1;
 }
 
-void ChatServer::handle_chat_message(const std::string& from_user, const ChatMessage& msg, int reply_fd) {
+void ChatServer::handle_chat_message(const std::string& from_user, const ChatMessage& msg, int reply_fd,
+                                     const std::string& session_key) {
     std::cout << "chat: recv from=" << msg.from_user()
               << " to=" << msg.to_user()
               << " msg_id=" << msg.msg_id()
@@ -419,14 +420,16 @@ void ChatServer::handle_chat_message(const std::string& from_user, const ChatMes
         cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms(), msg.msg_id());
     }
 
-    // Send delivery acknowledgment back to sender on the same connection
+    // Send delivery acknowledgment back to sender on the same connection.
+    // Use session_key (not from_user) for encryption so it matches the
+    // session that was used to decrypt the incoming message.
     if (reply_fd >= 0) {
         Envelope ack_env;
         ack_env.set_type(Envelope::DELIVERY_ACK);
         DeliveryAck ack;
         ack.set_msg_id(msg.msg_id());
         *ack_env.mutable_delivery_ack() = std::move(ack);
-        send_envelope(reply_fd, ack_env, session_manager_, from_user);
+        send_envelope(reply_fd, ack_env, session_manager_, session_key);
     }
 }
 
@@ -951,7 +954,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
 
         switch (env.type()) {
             case Envelope::CHAT:
-                handle_chat_message(from_user, env.chat(), fd);
+                handle_chat_message(from_user, env.chat(), fd, session_key);
                 break;
             case Envelope::FILE_OFFER:
                 handle_file_offer(from_user, peer_ip, peer_port, env.file_offer());

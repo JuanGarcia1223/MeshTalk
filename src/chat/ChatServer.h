@@ -99,7 +99,8 @@ private:
     std::string resolve_peer_name(const std::string& peer_ip);
     std::string session_key_for_ip(const std::string& peer_ip);
     int get_outbound_fd(const std::string& ip, uint16_t port);
-    void handle_chat_message(const std::string& from_user, const class ChatMessage& msg, int reply_fd);
+    void handle_chat_message(const std::string& from_user, const class ChatMessage& msg, int reply_fd,
+                             const std::string& session_key);
     void handle_delivery_ack(const std::string& from_user, const class DeliveryAck& ack);
 
     // File transfer helpers
