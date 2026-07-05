@@ -941,10 +941,12 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
 
-                // Always generate fresh ephemeral keys for an inbound handshake.
-                // This ensures the session key is derived from the keys actually
-                // used on this connection, avoiding stale/mismatched sessions.
-                session_manager_->initSession(session_key, false);
+                // Only init a new session if we don't already have one.
+                // If we initiated, our session was created in connect_to() and
+                // processed by the response thread; re-init would wipe it.
+                if (!session_manager_->hasSession(session_key)) {
+                    session_manager_->initSession(session_key, false);
+                }
                 bool ok = session_manager_->processHandshake(session_key, their_ed25519, their_x25519, sig);
                 if (!ok) {
                     std::cerr << "chat: handshake verification FAILED for " << from_user << "\n";
