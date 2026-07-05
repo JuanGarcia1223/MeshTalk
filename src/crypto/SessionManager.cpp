@@ -252,3 +252,16 @@ void SessionManager::aliasSession(const std::string& from_key, const std::string
         log("Aliased session from " + from_key + " to " + to_key);
     }
 }
+
+void SessionManager::clearSession(const std::string& peer_name) {
+    auto it = sessions_.find(peer_name);
+    if (it != sessions_.end()) {
+        // Securely wipe ephemeral secret key before erasing
+        if (!it->second.our_ephemeral_x25519_sk.empty()) {
+            sodium_memzero(it->second.our_ephemeral_x25519_sk.data(),
+                           it->second.our_ephemeral_x25519_sk.size());
+        }
+        sessions_.erase(it);
+        log("Cleared session for " + peer_name);
+    }
+}
