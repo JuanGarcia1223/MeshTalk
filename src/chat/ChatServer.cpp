@@ -686,33 +686,36 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
             send_envelope(fd, env);
         }
 
-        // Set a short read timeout so the thread exits cleanly if no response arrives.
-        timeval tv{};
-        tv.tv_sec = 5;
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        // Always spawn a single reader thread for this outbound fd.
+        // It first handles the handshake response (if needed), then loops
+        // reading ACKs and control envelopes so nothing is dropped.
+        std::thread([this, fd, peer_name]() {
+            // Phase 1: if session not ready yet, read handshake response with timeout.
+            if (!session_manager_->isReady(peer_name)) {
+                timeval tv{};
+                tv.tv_sec = 5;
+                setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-        std::thread([this, fd, peer_name]() {
-            Envelope resp;
-            if (recv_envelope(fd, resp) && resp.type() == Envelope::HANDSHAKE) {
-                if (logger_) logger_("Received handshake response from " + peer_name);
-                const auto& hs = resp.handshake();
-                std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
-                std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
-                std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
-                // Session was already created in connect_to above; just process.
-                session_manager_->processHandshake(peer_name, their_ed25519, their_x25519, sig);
+                Envelope resp;
+                if (recv_envelope(fd, resp) && resp.type() == Envelope::HANDSHAKE) {
+                    if (logger_) logger_("Received handshake response from " + peer_name);
+                    const auto& hs = resp.handshake();
+                    std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
+                    std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
+                    std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
+                    session_manager_->processHandshake(peer_name, their_ed25519, their_x25519, sig);
+                }
+
+                // Clear timeout for continuous reading.
+                timeval no_tv{};
+                setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &no_tv, sizeof(no_tv));
             }
-        }).detach();
-    } else if (session_manager_ && session_manager_->isReady(peer_name)) {
-        // Session already ready — spawn a lightweight reader thread for this
-        // outbound connection so ACKs and other control envelopes can be received.
-        std::thread([this, fd, peer_name]() {
+
+            // Phase 2: continuous read loop for ACKs and control envelopes.
             while (running_) {
                 Envelope env;
                 if (!recv_envelope(fd, env)) break;
 
-                // Only process non-chat envelopes on outbound connections.
-                // Chat/file messages are handled by the inbound accept_loop.
                 switch (env.type()) {
                     case Envelope::DELIVERY_ACK:
                         handle_delivery_ack(peer_name, env.delivery_ack());
@@ -727,7 +730,7 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
                     }
                     default:
                         // Ignore chat/file envelopes on outbound reader —
-                        // they are processed by the inbound handler.
+                        // they are processed by the inbound accept_loop.
                         break;
                 }
             }
