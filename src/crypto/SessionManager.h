@@ -57,6 +57,9 @@ public:
     // (e.g. when peer name is discovered after session was keyed by IP)
     void aliasSession(const std::string& from_key, const std::string& to_key);
 
+    // Remove a session so the next connection triggers a fresh handshake
+    void clearSession(const std::string& peer_name);
+
     void set_logger(std::function<void(const std::string&)> fn) { logger_ = std::move(fn); }
 
 private:

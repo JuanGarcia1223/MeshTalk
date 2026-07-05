@@ -685,9 +685,10 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
         outbound_fd_by_endpoint_[key] = fd;
     }
 
-    // Initiator: send handshake and spawn a thread to read the response.
-    // Only do this if we don't already have a session for this peer.
-    if (session_manager_ && !session_manager_->hasSession(peer_name)) {
+    // Initiator: always start a fresh session on a new connection.
+    // This handles the peer-restart case where old sessions are stale.
+    if (session_manager_) {
+        session_manager_->clearSession(peer_name);
         session_manager_->initSession(peer_name, true);
         auto payload = session_manager_->buildHandshakePayload(peer_name);
         if (!payload.empty()) {
@@ -711,9 +712,7 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
                 std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
-                if (!session_manager_->hasSession(peer_name)) {
-                    session_manager_->initSession(peer_name, true);
-                }
+                // Session was already created in connect_to above; just process.
                 session_manager_->processHandshake(peer_name, their_ed25519, their_x25519, sig);
             }
         }).detach();
@@ -832,6 +831,11 @@ void ChatServer::disconnect_peer(const std::string& peer_name) {
     {
         std::lock_guard<std::mutex> lock(session_keys_mutex_);
         ip_to_session_key_.erase(peer_ip);
+    }
+
+    // Clear the crypto session so the next connection starts fresh.
+    if (session_manager_) {
+        session_manager_->clearSession(peer_name);
     }
 }
 
@@ -953,12 +957,24 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
 
-                // Only init a new session if we don't already have one.
-                // If we initiated, our session was created in connect_to() and
-                // processed by the response thread; re-init would wipe it.
-                if (!session_manager_->hasSession(session_key)) {
-                    session_manager_->initSession(session_key, false);
+                // A new inbound handshake means the peer wants a fresh session.
+                // Clear any stale session and old outbound connections so both
+                // sides converge on the same ephemeral keys.
+                session_manager_->clearSession(session_key);
+                {
+                    std::lock_guard<std::mutex> lock(outbound_mutex_);
+                    const std::string ip_prefix = peer_ip + ":";
+                    for (auto it = outbound_fd_by_endpoint_.begin();
+                         it != outbound_fd_by_endpoint_.end();) {
+                        if (it->first.find(ip_prefix) == 0) {
+                            close(it->second);
+                            it = outbound_fd_by_endpoint_.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
                 }
+                session_manager_->initSession(session_key, false);
                 bool ok = session_manager_->processHandshake(session_key, their_ed25519, their_x25519, sig);
                 if (!ok) {
                     std::cerr << "chat: handshake verification FAILED for " << from_user << "\n";
