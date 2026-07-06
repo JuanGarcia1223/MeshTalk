@@ -669,9 +669,9 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
         outbound_fd_by_endpoint_[key] = fd;
     }
 
-    // Initiator: always start a fresh session on a new connection.
-    // This handles the peer-restart case where old sessions are stale.
-    if (session_manager_) {
+    // Initiator: only handshake if we don't have a ready session.
+    // If session exists and is ready, just reuse it — avoids churn on every message.
+    if (session_manager_ && !session_manager_->isReady(peer_name)) {
         session_manager_->clearSession(peer_name);
         session_manager_->initSession(peer_name, true);
         auto payload = session_manager_->buildHandshakePayload(peer_name);
@@ -698,6 +698,35 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
                 // Session was already created in connect_to above; just process.
                 session_manager_->processHandshake(peer_name, their_ed25519, their_x25519, sig);
+            }
+        }).detach();
+    } else if (session_manager_ && session_manager_->isReady(peer_name)) {
+        // Session already ready — spawn a lightweight reader thread for this
+        // outbound connection so ACKs and other control envelopes can be received.
+        std::thread([this, fd, peer_name]() {
+            while (running_) {
+                Envelope env;
+                if (!recv_envelope(fd, env)) break;
+
+                // Only process non-chat envelopes on outbound connections.
+                // Chat/file messages are handled by the inbound accept_loop.
+                switch (env.type()) {
+                    case Envelope::DELIVERY_ACK:
+                        handle_delivery_ack(peer_name, env.delivery_ack());
+                        break;
+                    case Envelope::HANDSHAKE: {
+                        const auto& hs = env.handshake();
+                        std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
+                        std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
+                        std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
+                        session_manager_->processHandshake(peer_name, their_ed25519, their_x25519, sig);
+                        break;
+                    }
+                    default:
+                        // Ignore chat/file envelopes on outbound reader —
+                        // they are processed by the inbound handler.
+                        break;
+                }
             }
         }).detach();
     }
@@ -936,13 +965,19 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
             case Envelope::HANDSHAKE: {
                 if (!session_manager_) break;
                 if (logger_) logger_("Received handshake from " + from_user);
+
+                // If we initiated this session, the response thread in connect_to
+                // will handle the handshake response. Skip here to avoid double-processing.
+                if (session_manager_->weInitiated(session_key)) {
+                    break;
+                }
+
                 const auto& hs = env.handshake();
                 std::vector<uint8_t> their_ed25519(hs.ed25519_pk().begin(), hs.ed25519_pk().end());
                 std::vector<uint8_t> their_x25519(hs.x25519_pk().begin(), hs.x25519_pk().end());
                 std::vector<uint8_t> sig(hs.signature().begin(), hs.signature().end());
 
-                // A new inbound handshake means the peer wants a fresh session.
-                // Clear the old session so we derive a new shared secret.
+                // Responder: clear old session and establish new one.
                 session_manager_->clearSession(session_key);
                 session_manager_->initSession(session_key, false);
                 bool ok = session_manager_->processHandshake(session_key, their_ed25519, their_x25519, sig);
