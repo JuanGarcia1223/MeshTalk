@@ -673,8 +673,8 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
     }
 
     // Initiator: only handshake if we don't have a ready session.
-    // If session exists and is ready, just reuse it — avoids churn on every message.
-    if (session_manager_ && !session_manager_->isReady(peer_name)) {
+    const bool need_handshake = session_manager_ && !session_manager_->isReady(peer_name);
+    if (need_handshake) {
         session_manager_->clearSession(peer_name);
         session_manager_->initSession(peer_name, true);
         auto payload = session_manager_->buildHandshakePayload(peer_name);
@@ -685,13 +685,15 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
             if (logger_) logger_("Sending handshake to " + peer_name);
             send_envelope(fd, env);
         }
+    }
 
-        // Always spawn a single reader thread for this outbound fd.
-        // It first handles the handshake response (if needed), then loops
-        // reading ACKs and control envelopes so nothing is dropped.
-        std::thread([this, fd, peer_name]() {
+    // Always spawn a single reader thread for this outbound fd.
+    // It first handles the handshake response (if needed), then loops
+    // reading ACKs and control envelopes so nothing is dropped.
+    if (session_manager_) {
+        std::thread([this, fd, peer_name, need_handshake]() {
             // Phase 1: if session not ready yet, read handshake response with timeout.
-            if (!session_manager_->isReady(peer_name)) {
+            if (need_handshake) {
                 timeval tv{};
                 tv.tv_sec = 5;
                 setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
