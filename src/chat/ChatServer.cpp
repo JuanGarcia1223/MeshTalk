@@ -716,6 +716,22 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
                 Envelope env;
                 if (!recv_envelope(fd, env)) break;
 
+                // Decrypt if ciphertext is present — ACKs are encrypted by send_envelope.
+                if (!env.ciphertext().empty()) {
+                    if (!session_manager_->isReady(peer_name)) {
+                        break;
+                    }
+                    std::vector<uint8_t> nonce(env.nonce().begin(), env.nonce().end());
+                    std::vector<uint8_t> cipher(env.ciphertext().begin(), env.ciphertext().end());
+                    auto plaintext = session_manager_->decrypt(peer_name, cipher, nonce);
+                    if (!plaintext) {
+                        break;
+                    }
+                    if (!env.ParseFromArray(plaintext->data(), static_cast<int>(plaintext->size()))) {
+                        break;
+                    }
+                }
+
                 switch (env.type()) {
                     case Envelope::DELIVERY_ACK:
                         handle_delivery_ack(peer_name, env.delivery_ack());
