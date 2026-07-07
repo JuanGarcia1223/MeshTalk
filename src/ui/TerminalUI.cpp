@@ -101,6 +101,23 @@ bool TerminalUI::initDatabase() {
         }
     }
 
+    // Load trusted peers from known_peers table so they stay trusted
+    // even when offline. Only a key mismatch will remove them.
+    {
+        auto known = db_manager_->getAllKnownPeers();
+        std::lock_guard<std::mutex> lock(peers_mutex_);
+        for (const auto& kp : known) {
+            if (kp.trust_status == "trusted") {
+                trusted_peers_.insert(kp.username);
+                pending_peers_.erase(kp.username);
+                mismatch_peers_.erase(kp.username);
+            }
+            if (peers_.find(kp.username) == peers_.end()) {
+                peers_[kp.username] = PeerInfo{kp.username, "", 0};
+            }
+        }
+    }
+
     // Load all messages from database
     std::vector<ChatMessageRecord> records = db_manager_->loadAllMessages();
     for (const auto& record : records) {
