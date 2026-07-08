@@ -156,6 +156,7 @@ void run_info_editor(DatabaseManager& db) {
 int main(int argc, char** argv) {
     bool no_ui_mode = false;
     bool edit_info_mode = false;
+    bool enable_ack_show = false;
     std::string name;
     std::set<std::string> debug_cats;
 
@@ -182,6 +183,8 @@ int main(int argc, char** argv) {
             } else {
                 debug_cats = {"UDPB", "CRYPTO", "MESSAGE", "RENDER", "NET", "FILE"};
             }
+        } else if (std::strcmp(argv[i], "--enable-ack-show") == 0) {
+            enable_ack_show = true;
         } else if (std::strcmp(argv[i], "--noui") == 0) {
             no_ui_mode = true;
         } else if (std::strcmp(argv[i], "--edit-info") == 0) {
@@ -190,7 +193,7 @@ int main(int argc, char** argv) {
             name = argv[++i];
         } else {
             std::cerr << "usage: " << argv[0]
-                      << " --name <one-word-name> [--debug [<CAT1,CAT2,...>]] [--noui] [--edit-info]\n"
+                      << " --name <one-word-name> [--debug [<CAT1,CAT2,...>]] [--enable-ack-show] [--noui] [--edit-info]\n"
                       << "  debug categories: UDPB, CRYPTO, MESSAGE, RENDER, NET, FILE\n"
                       << "  example: --debug UDPB,CRYPTO\n";
             return 1;
@@ -260,7 +263,7 @@ int main(int argc, char** argv) {
     }
 
     TerminalUI ui(
-            debug_mode, name,
+            debug_mode, enable_ack_show, name,
             [&chat_server, &name, chat_port](const TerminalUI::PeerInfo& peer) {
                 if (peer.username == name && peer.tcp_port == chat_port) {
                     std::cout << "chat: ignoring self-connect to " << peer.username << "\n";

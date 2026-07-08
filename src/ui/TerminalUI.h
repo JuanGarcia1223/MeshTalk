@@ -37,7 +37,7 @@ public:
         std::string status;  // "pending", "sent", "delivered", "read"
     };
 
-    TerminalUI(bool debug_mode, std::string self_name,
+    TerminalUI(bool debug_mode, bool enable_ack_show, std::string self_name,
                std::function<void(const PeerInfo&)> on_peer_activate = {},
                std::function<std::string(const PeerInfo&, const std::string&)> on_send_chat = {},
                std::function<void(const std::string&)> on_peer_offline = {});
@@ -178,6 +178,7 @@ private:
     void close_fd(int& fd);
 
     bool debug_mode_{false};
+    bool enable_ack_show_{false};
     bool running_{false};
     std::atomic<bool> capture_running_{false};
 
