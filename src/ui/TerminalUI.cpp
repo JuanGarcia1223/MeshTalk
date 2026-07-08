@@ -1217,12 +1217,17 @@ void TerminalUI::draw_chat() {
     const bool peer_online = is_selected_peer_online();
     const bool peer_trusted = is_selected_peer_trusted();
 
-    // Show untrusted peer name in red in the title
+    // Show online/offline status and trust state in the title
     std::string title = " Chat: " + active_name + " ";
     uint64_t title_text_ch = base_text_ch;
-    if (!peer_trusted && active_name != "self") {
-        title = " Chat: " + active_name + "(untrusted) ";
-        title_text_ch = warning_ch;
+    if (active_name != "self") {
+        std::string status_tag = peer_online ? "(online)" : "(offline)";
+        if (!peer_trusted) {
+            title = " Chat: " + active_name + status_tag + "(untrusted) ";
+            title_text_ch = warning_ch;
+        } else {
+            title = " Chat: " + active_name + status_tag + " ";
+        }
     }
     draw_panel(chat_plane_, title, border_ch, title_text_ch, 0x0f172a,
                0x111c33, 0x0f172a, 0x111c33);
