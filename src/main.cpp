@@ -13,6 +13,7 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -153,20 +154,34 @@ void run_info_editor(DatabaseManager& db) {
 }    // namespace
 
 int main(int argc, char** argv) {
-    bool debug_mode = false;
     bool no_ui_mode = false;
-    bool udp_debug = false;
-    bool verbose_crypto = false;
     bool edit_info_mode = false;
     std::string name;
+    std::set<std::string> debug_cats;
+
+    auto split_csv = [](const std::string& s) {
+        std::set<std::string> result;
+        size_t start = 0;
+        while (start < s.size()) {
+            size_t end = s.find(',', start);
+            if (end == std::string::npos) end = s.size();
+            std::string token = s.substr(start, end - start);
+            size_t a = 0, b = token.size();
+            while (a < b && std::isspace(static_cast<unsigned char>(token[a]))) ++a;
+            while (b > a && std::isspace(static_cast<unsigned char>(token[b - 1]))) --b;
+            if (a < b) result.insert(token.substr(a, b - a));
+            start = end + 1;
+        }
+        return result;
+    };
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--debug") == 0) {
-            debug_mode = true;
-        } else if (std::strcmp(argv[i], "--udp-debug") == 0) {
-            udp_debug = true;
-        } else if (std::strcmp(argv[i], "--verbose-crypto") == 0) {
-            verbose_crypto = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                debug_cats = split_csv(argv[++i]);
+            } else {
+                debug_cats = {"UDPB", "CRYPTO", "MESSAGE", "RENDER", "NET", "FILE"};
+            }
         } else if (std::strcmp(argv[i], "--noui") == 0) {
             no_ui_mode = true;
         } else if (std::strcmp(argv[i], "--edit-info") == 0) {
@@ -175,10 +190,16 @@ int main(int argc, char** argv) {
             name = argv[++i];
         } else {
             std::cerr << "usage: " << argv[0]
-                      << " --name <one-word-name> [--debug] [--verbose-crypto] [--udp-debug] [--noui] [--edit-info]\n";
+                      << " --name <one-word-name> [--debug [<CAT1,CAT2,...>]] [--noui] [--edit-info]\n"
+                      << "  debug categories: UDPB, CRYPTO, MESSAGE, RENDER, NET, FILE\n"
+                      << "  example: --debug UDPB,CRYPTO\n";
             return 1;
         }
     }
+
+    bool debug_mode = !debug_cats.empty();
+    bool udp_debug = debug_cats.count("UDPB") > 0;
+    bool verbose_crypto = debug_cats.count("CRYPTO") > 0;
 
     if (!is_one_word(name)) {
         std::cerr << "--name with a one-word value is required\n";
