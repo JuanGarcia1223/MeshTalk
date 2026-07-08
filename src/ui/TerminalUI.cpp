@@ -1464,7 +1464,17 @@ void TerminalUI::draw_command_menu() {
     ncplane_dim_yx(chat_plane_, &rows, &cols);
     if (rows < 12 || cols < 30) return;
 
-    const int menu_w = std::min(40, static_cast<int>(cols) - 4);
+    // Compute dynamic column widths
+    size_t max_cmd_len = 0;
+    size_t max_desc_len = 0;
+    for (const auto& cmd : commands_) {
+        max_cmd_len = std::max(max_cmd_len, cmd.first.size());
+        max_desc_len = std::max(max_desc_len, cmd.second.size());
+    }
+    const int cmd_col_w = static_cast<int>(max_cmd_len);
+    const int spacing = 3;  // Space between command and description
+    const int content_w = 2 + cmd_col_w + spacing + static_cast<int>(max_desc_len);  // padding + cmd + gap + desc
+    const int menu_w = std::min(content_w + 4, static_cast<int>(cols) - 4);  // +4 for borders/padding
     const int menu_h = static_cast<int>(commands_.size()) + 3;  // Title + commands + padding
     const int menu_x = (static_cast<int>(cols) - menu_w) / 2;
     const int menu_y = static_cast<int>(rows) - menu_h - 4;  // Above input box
@@ -1490,14 +1500,14 @@ void TerminalUI::draw_command_menu() {
     ncplane_putstr_yx(chat_plane_, menu_y, menu_x + 2, " Commands ");
     ncplane_off_styles(chat_plane_, NCSTYLE_BOLD);
 
-    // Commands - just reference, no selection
+    // Commands with dynamic spacing
     for (size_t i = 0; i < commands_.size(); ++i) {
         int y = menu_y + 1 + static_cast<int>(i);
         ncplane_set_channels(chat_plane_, cmd_ch);
         ncplane_putstr_yx(chat_plane_, y, menu_x + 2, commands_[i].first.c_str());
         // Description
         ncplane_set_channels(chat_plane_, dim_ch);
-        int desc_x = menu_x + 10;
+        int desc_x = menu_x + 2 + cmd_col_w + spacing;
         if (desc_x < static_cast<int>(cols) - 2) {
             ncplane_putstr_yx(chat_plane_, y, desc_x, commands_[i].second.c_str());
         }
