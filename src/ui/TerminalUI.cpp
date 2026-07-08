@@ -71,11 +71,12 @@ std::string TerminalUI::local_datetime_now() {
     return oss.str();
 }
 
-TerminalUI::TerminalUI(bool debug_mode, std::string self_name,
+TerminalUI::TerminalUI(bool debug_mode, bool enable_ack_show, std::string self_name,
                        std::function<void(const PeerInfo&)> on_peer_activate,
                        std::function<std::string(const PeerInfo&, const std::string&)> on_send_chat,
                        std::function<void(const std::string&)> on_peer_offline)
     : debug_mode_(debug_mode),
+      enable_ack_show_(enable_ack_show),
       self_name_(std::move(self_name)),
       on_peer_activate_(std::move(on_peer_activate)),
       on_send_chat_(std::move(on_send_chat)),
@@ -1367,8 +1368,8 @@ void TerminalUI::draw_chat() {
                 // Draw warning symbol in yellow
                 ncplane_set_channels(chat_plane_, warning_yellow_ch);
                 ncplane_putstr_yx(chat_plane_, y, 1, "⚠");
-                // Draw S: with red background if pending, else sender color
-                if (vl.pending) {
+                // Draw S: with red background if pending and enabled, else sender color
+                if (enable_ack_show_ && vl.pending) {
                     ncplane_set_channels(chat_plane_, pending_red_ch);
                     ncplane_putstr_yx(chat_plane_, y, 4, "S:");
                     ncplane_set_channels(chat_plane_, sender_ch);
@@ -1384,8 +1385,8 @@ void TerminalUI::draw_chat() {
                 // Draw rest in receiver color (⚠ = 3 bytes, so "R: " starts at byte 3)
                 ncplane_set_channels(chat_plane_, receiver_ch);
                 ncplane_putstr_yx(chat_plane_, y, 4, left.substr(3).c_str());
-            } else if (vl.pending && left.size() >= 3 && left.substr(0, 3) == "S: ") {
-                // Draw S: with red background for pending messages
+            } else if (enable_ack_show_ && vl.pending && left.size() >= 3 && left.substr(0, 3) == "S: ") {
+                // Draw S: with red background for pending messages (only when enabled)
                 ncplane_set_channels(chat_plane_, pending_red_ch);
                 ncplane_putstr_yx(chat_plane_, y, 1, "S:");
                 ncplane_set_channels(chat_plane_, sender_ch);
