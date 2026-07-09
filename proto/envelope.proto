@@ -37,6 +37,7 @@ message Envelope {
     DELIVERY_ACK  = 5;
     INFO_REQUEST  = 6;
     INFO_RESPONSE = 7;
+    ENCRYPTED     = 8;  // Outer wrapper for ciphertext payloads (inner type in decrypted bytes)
   }
 
   Type type = 1;

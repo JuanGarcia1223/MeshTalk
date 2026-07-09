@@ -5,6 +5,8 @@
 #include "crypto/SessionManager.h"
 #include "db/DatabaseManager.h"
 
+#include <sodium.h>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -36,7 +38,7 @@ bool send_envelope(int fd, const Envelope& env, SessionManager* sm = nullptr,
             std::vector<uint8_t>(payload.begin(), payload.end()));
         if (!encrypted) return false;
         Envelope wrapper;
-        wrapper.set_type(Envelope::CHAT);
+        wrapper.set_type(Envelope::ENCRYPTED);  // Outer wrapper — real type is inside ciphertext
         wrapper.set_ciphertext(encrypted->first.data(), encrypted->first.size());
         wrapper.set_nonce(encrypted->second.data(), encrypted->second.size());
         if (!wrapper.SerializeToString(&payload)) return false;
@@ -128,14 +130,11 @@ void ChatServer::set_file_received_callback(
 }
 
 std::string ChatServer::compute_sha256(const std::vector<uint8_t>& data) {
-    // Simple hash for now - in production use proper SHA256
-    // For now return a placeholder based on size and first/last bytes
+    uint8_t hash[crypto_generichash_BYTES];
+    crypto_generichash(hash, sizeof(hash), data.data(), data.size(), nullptr, 0);
     std::ostringstream oss;
-    oss << std::hex << data.size();
-    if (!data.empty()) {
-        oss << std::setw(2) << std::setfill('0') << static_cast<int>(data.front());
-        oss << std::setw(2) << std::setfill('0') << static_cast<int>(data.back());
-    }
+    oss << std::hex << std::setfill('0');
+    for (auto b : hash) oss << std::setw(2) << static_cast<int>(b);
     return oss.str();
 }
 
@@ -213,21 +212,10 @@ bool ChatServer::send_file_offer(const std::string& from_user, const std::string
         return false;
     }
 
-    // Send file offer
-    FileOffer offer;
-    offer.set_transfer_id(transfer->transfer_id);
-    offer.set_filename(filename);
-    offer.set_file_size(transfer->file_size);
-    offer.set_sha256_hash(transfer->sha256_hash);
-
-    // Wrap in envelope (we need to use the protobuf message type)
-    // For now, we'll use a special prefix in content to indicate file offer
-    // The actual implementation will parse different message types
-
-    std::cout << "chat: sending file offer " << transfer->transfer_id 
+    std::cout << "chat: sending file offer " << transfer->transfer_id
               << " for " << filename << " (" << transfer->file_size << " bytes) to " << to_user << "\n";
 
-    // Start sending chunks in a separate thread
+    // Start sending chunks (including FILE_OFFER envelope) in a separate thread
     std::thread(&ChatServer::send_file_chunks, this, transfer->transfer_id).detach();
 
     return true;
@@ -727,10 +715,12 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
                     std::vector<uint8_t> cipher(env.ciphertext().begin(), env.ciphertext().end());
                     auto plaintext = session_manager_->decrypt(peer_name, cipher, nonce);
                     if (!plaintext) {
-                        break;
+                        if (logger_) logger_("Decryption failed on outbound fd for " + peer_name + ", skipping envelope");
+                        continue;
                     }
                     if (!env.ParseFromArray(plaintext->data(), static_cast<int>(plaintext->size()))) {
-                        break;
+                        if (logger_) logger_("Parse failed after decrypt for " + peer_name + ", skipping envelope");
+                        continue;
                     }
                 }
 
@@ -1110,8 +1100,20 @@ void ChatServer::handle_file_chunk(const std::string& from_user, const FileChunk
     if (chunk.is_last() || transfer->chunks.size() >= transfer->file_size) {
         // Verify size
         if (transfer->chunks.size() == transfer->file_size) {
+            // Verify SHA-256 hash
+            std::string received_hash = compute_sha256(transfer->chunks);
+            if (received_hash != transfer->sha256_hash) {
+                std::cerr << "chat: file hash mismatch for " << chunk.transfer_id()
+                          << " (got " << received_hash << ", expected " << transfer->sha256_hash << ")\n";
+                transfer->status = FileTransferStatus::FAILED;
+                if (db_) {
+                    db_->updateFileTransferStatus(chunk.transfer_id(), "failed");
+                }
+                return;
+            }
+
             transfer->status = FileTransferStatus::COMPLETE;
-            
+
             // Save to database
             if (db_) {
                 db_->saveFileData(chunk.transfer_id(), transfer->chunks);
@@ -1119,7 +1121,7 @@ void ChatServer::handle_file_chunk(const std::string& from_user, const FileChunk
             }
 
             std::cout << "chat: file " << transfer->filename << " received completely ("
-                      << transfer->chunks.size() << " bytes)\n";
+                      << transfer->chunks.size() << " bytes, hash verified)\n";
 
             // Notify UI
             if (file_received_callback_) {
@@ -1127,8 +1129,8 @@ void ChatServer::handle_file_chunk(const std::string& from_user, const FileChunk
                                         transfer->filename, transfer->file_size);
             }
         } else {
-            std::cerr << "chat: file size mismatch for " << chunk.transfer_id() 
-                      << " (got " << transfer->chunks.size() << ", expected " 
+            std::cerr << "chat: file size mismatch for " << chunk.transfer_id()
+                      << " (got " << transfer->chunks.size() << ", expected "
                       << transfer->file_size << ")\n";
             transfer->status = FileTransferStatus::FAILED;
             if (db_) {
