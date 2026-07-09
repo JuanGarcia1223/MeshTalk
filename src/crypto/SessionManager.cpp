@@ -40,9 +40,10 @@ void SessionManager::initSession(const std::string& peer_name, bool we_initiated
     crypto_box_keypair(session.our_ephemeral_x25519_pk.data(),
                        session.our_ephemeral_x25519_sk.data());
     session.we_initiated = we_initiated;
+    std::string pk_hex = hex_prefix(session.our_ephemeral_x25519_pk, 8);
     sessions_[peer_name] = std::move(session);
     log("Generated ephemeral X25519 keypair for " + peer_name +
-        " pk=" + hex_prefix(session.our_ephemeral_x25519_pk, 8));
+        " pk=" + pk_hex);
 }
 
 std::vector<uint8_t> SessionManager::buildHandshakePayload(const std::string& peer_name) {
