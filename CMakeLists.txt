@@ -66,6 +66,10 @@ add_executable(meshtak
   src/chat/ChatServer.cpp
   src/discovery/UdpHelloBroadcaster.cpp
   src/ui/TerminalUI.cpp
+  src/ui/TerminalUIInput.cpp
+  src/ui/TerminalUIRender.cpp
+  src/ui/TerminalUIModals.cpp
+  src/ui/TerminalUIFileTransfer.cpp
   ${PROTO_SRCS}
 )
 
