@@ -3,7 +3,7 @@
 ## Startup Flags
 
 ```bash
-./meshtalk_demo --name <username> [options]
+./meshtak --name <username> [options]
 ```
 
 ### Required
@@ -38,16 +38,16 @@ When using `--debug`, you can optionally specify comma-separated categories:
 
 ```bash
 # Enable all debug categories
-./meshtalk_demo --name alice --debug
+./meshtak --name alice --debug
 
 # Enable only UDP and crypto debug
-./meshtalk_demo --name alice --debug UDPB,CRYPTO
+./meshtak --name alice --debug UDPB,CRYPTO
 
 # Enable message and network debug
-./meshtalk_demo --name alice --debug MESSAGE,NET
+./meshtak --name alice --debug MESSAGE,NET
 
 # Enable pending ACK visual indicator
-./meshtalk_demo --name alice --enable-ack-show --debug MESSAGE
+./meshtak --name alice --enable-ack-show --debug MESSAGE
 ```
 
 ### `--enable-ack-show`
@@ -104,7 +104,7 @@ Opens a download manager showing all completed file transfers. Select a transfer
 Launch with `--edit-info` to manage your personal info key-value pairs without starting the full chat UI:
 
 ```bash
-./meshtalk_demo --name alice --edit-info
+./meshtak --name alice --edit-info
 ```
 
 Options:
@@ -120,17 +120,17 @@ These entries are sent to peers when they request your info via `/INFO`.
 
 ```bash
 # Basic usage
-./meshtalk_demo --name alice
+./meshtak --name alice
 
 # With debug output for network troubleshooting
-./meshtalk_demo --name alice --debug UDPB,NET,MESSAGE
+./meshtak --name alice --debug UDPB,NET,MESSAGE
 
 # With ACK indicator and crypto logging
-./meshtalk_demo --name alice --enable-ack-show --debug CRYPTO,MESSAGE
+./meshtak --name alice --enable-ack-show --debug CRYPTO,MESSAGE
 
 # Background mode (no UI, just discovery)
-./meshtalk_demo --name alice --noui
+./meshtak --name alice --noui
 
 # Edit personal info
-./meshtalk_demo --name alice --edit-info
+./meshtak --name alice --edit-info
 ```

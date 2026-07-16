@@ -20,13 +20,13 @@ mkdir build && cd build
 cmake .. && make -j$(nproc)
 
 # Run
-./meshtalk_demo --name alice
+./meshtak --name alice
 
 # With debug output
-./meshtalk_demo --name alice --debug UDPB,CRYPTO
+./meshtak --name alice --debug UDPB,CRYPTO
 
 # Enable pending-ACK visual indicator
-./meshtalk_demo --name alice --enable-ack-show
+./meshtak --name alice --enable-ack-show
 ```
 
 ## Core Features

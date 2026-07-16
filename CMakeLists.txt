@@ -58,7 +58,7 @@ protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS
   proto/envelope.proto
 )
 
-add_executable(meshtalk_demo
+add_executable(meshtak
   src/main.cpp
   src/db/DatabaseManager.cpp
   src/crypto/KeyManager.cpp
@@ -69,7 +69,7 @@ add_executable(meshtalk_demo
   ${PROTO_SRCS}
 )
 
-target_include_directories(meshtalk_demo PRIVATE
+target_include_directories(meshtak PRIVATE
   src
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Protobuf_INCLUDE_DIRS}
@@ -79,16 +79,16 @@ target_include_directories(meshtalk_demo PRIVATE
 
 # Notcurses target names can vary; support common exported names.
 if(TARGET notcurses++)
-  target_link_libraries(meshtalk_demo PRIVATE notcurses++)
+  target_link_libraries(meshtak PRIVATE notcurses++)
 elseif(TARGET notcurses)
-  target_link_libraries(meshtalk_demo PRIVATE notcurses)
+  target_link_libraries(meshtak PRIVATE notcurses)
 elseif(TARGET notcurses-core)
-  target_link_libraries(meshtalk_demo PRIVATE notcurses-core)
+  target_link_libraries(meshtak PRIVATE notcurses-core)
 else()
   message(FATAL_ERROR "No expected notcurses target found (notcurses++, notcurses, notcurses-core)")
 endif()
 
-target_link_libraries(meshtalk_demo PRIVATE
+target_link_libraries(meshtak PRIVATE
   ${Protobuf_LIBRARIES}
   SQLiteCpp
   sodium
@@ -96,6 +96,6 @@ target_link_libraries(meshtalk_demo PRIVATE
 
 add_custom_target(run
     COMMAND ${CMAKE_SOURCE_DIR}/run.sh
-    DEPENDS meshtalk_demo
+    DEPENDS meshtak
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )

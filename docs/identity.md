@@ -63,7 +63,7 @@ You can configure key-value pairs that describe yourself. These are sent to peer
 
 Use the personal info editor:
 ```bash
-./meshtalk_demo --name alice --edit-info
+./meshtak --name alice --edit-info
 ```
 
 Options:
