@@ -60,6 +60,18 @@ std::string normalize_datetime_display(const std::string& input) {
     return out;
 }
 
+std::string format_display_datetime(const std::string& fallback, int64_t timestamp_ms) {
+    if (timestamp_ms <= 0) {
+        return normalize_datetime_display(fallback);
+    }
+    const std::time_t tt = static_cast<std::time_t>(timestamp_ms / 1000);
+    std::tm tm{};
+    localtime_r(&tt, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M");
+    return oss.str();
+}
+
 std::string TerminalUI::local_datetime_now() {
     using namespace std::chrono;
     const auto now = system_clock::now();
@@ -94,16 +106,12 @@ bool TerminalUI::initDatabase() {
     // Load all existing peers from database
     std::vector<std::string> db_peers = db_manager_->getAllPeers();
     for (const auto& peer_name : db_peers) {
-        // Add peer to chat map (will be displayed in people list)
-        // They will appear as offline until discovered via UDP
         std::lock_guard<std::mutex> lock(peers_mutex_);
         if (peers_.find(peer_name) == peers_.end()) {
             peers_[peer_name] = PeerInfo{peer_name, "", 0};
         }
     }
 
-    // Load trusted peers from known_peers table so they stay trusted
-    // even when offline. Only a key mismatch will remove them.
     {
         auto known = db_manager_->getAllKnownPeers();
         std::lock_guard<std::mutex> lock(peers_mutex_);
@@ -124,7 +132,7 @@ bool TerminalUI::initDatabase() {
     for (const auto& record : records) {
         std::lock_guard<std::mutex> lock(chat_mutex_);
         auto& thread = chats_by_peer_[record.peer_name];
-        thread.push_back(ChatItem{record.is_sender, record.content, normalize_datetime_display(record.timestamp), record.msg_id, record.status});
+        thread.push_back(ChatItem{record.is_sender, record.content, format_display_datetime(record.timestamp, record.timestamp_ms), record.msg_id, record.status});
         if (thread.size() > 2000) {
             thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
         }
@@ -170,7 +178,7 @@ bool TerminalUI::init() {
     if (debug_mode_) {
         add_debug("debug mode enabled");
     }
-    notcurses_mice_enable(nc_, NCMICE_ALL_EVENTS);
+    notcurses_mice_enable(nc_, NCMICE_BUTTON_EVENT);
     return true;
 }
 
@@ -575,7 +583,7 @@ void TerminalUI::add_chat_message(const std::string& peer_name, bool sender,
 
     std::lock_guard<std::mutex> lock(chat_mutex_);
     auto& thread = chats_by_peer_[peer_name];
-    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime), msg_id, status});
+    thread.push_back(ChatItem{sender, content, format_display_datetime(datetime, timestamp_ms), msg_id, status});
     if (thread.size() > 2000) {
         thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
     }
@@ -600,7 +608,7 @@ void TerminalUI::add_attachment_message(const std::string& peer_name, bool sende
 
     std::lock_guard<std::mutex> lock(chat_mutex_);
     auto& thread = chats_by_peer_[peer_name];
-    thread.push_back(ChatItem{sender, content, normalize_datetime_display(datetime), msg_id, status});
+    thread.push_back(ChatItem{sender, content, format_display_datetime(datetime, timestamp_ms), msg_id, status});
     if (thread.size() > 2000) {
         thread.erase(thread.begin(), thread.begin() + static_cast<long>(thread.size() - 2000));
     }
@@ -1362,8 +1370,6 @@ void TerminalUI::draw_chat() {
         }
 
         if (!left.empty()) {
-            // Check if this line starts with warning symbol (for untrusted peers)
-            // ⚠ is 3 bytes in UTF-8, so "⚠S: " is 6 bytes, "⚠R: " is 6 bytes
             if (!peer_trusted && left.size() >= 6 && left.substr(0, 6) == "⚠S: ") {
                 // Draw warning symbol in yellow
                 ncplane_set_channels(chat_plane_, warning_yellow_ch);
@@ -2770,7 +2776,7 @@ void TerminalUI::draw_download_popup() {
             bool is_selected = (i + scroll_offset) == download_selected_index_;
             
             std::string direction = file.is_sender ? "→ " : "← ";
-            std::string when = normalize_datetime_display(file.timestamp);
+            std::string when = format_display_datetime(file.timestamp, file.timestamp_ms);
             std::string line = direction + file.filename + " (" + std::to_string((file.file_size + 1023) / 1024) + " KB) " + when;
             
             // Truncate if too long
