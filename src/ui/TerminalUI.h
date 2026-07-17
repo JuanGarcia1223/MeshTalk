@@ -46,9 +46,7 @@ public:
     bool initDatabase();
     DatabaseManager* getDatabase() { return db_manager_.get(); }
 
-    // Selects which .db file initDatabase() opens (<stem>.db); defaults to
-    // self_name_ when unset. Lets the app db file (e.g. "meshtalk") differ
-    // from the username shown to peers, which is loaded from that db.
+    // Selects which .db file initDatabase() opens (<stem>.db), defaulting to self_name_ when unset.
     void set_db_file_stem(const std::string& stem) { db_file_stem_ = stem; }
 
     TerminalUI(const TerminalUI&) = delete;

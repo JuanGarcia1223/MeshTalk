@@ -14,6 +14,7 @@
 #include <utility>
 
 using tui_detail::make_channels;
+using tui_detail::resolve_local_path;
 
 void TerminalUI::render() {
     if (!nc_) {
@@ -235,8 +236,7 @@ void TerminalUI::draw_debug() {
 
     const int total = static_cast<int>(lines.size());
 
-    // Work backwards from the end to find the first line that fits in max_rows
-    // when accounting for text wrapping.
+    // Work backwards from the end to find the first line that fits in max_rows, accounting for text wrapping.
     int start = total;
     int consumed_rows = 0;
     for (int i = total - 1; i >= 0; --i) {
@@ -533,8 +533,7 @@ bool TerminalUI::handle_people_click(int abs_y, int abs_x) {
     const int visual_idx = rel_y - 2;  // Row within the list (0 = first item)
     int idx = visual_idx;
 
-    // Separator is at index trusted_count (0-based visual position)
-    // If separator is shown and click is at or below it, adjust index
+    // Separator sits at index trusted_count; if shown and click is at/below it, adjust the index.
     if (pending_count > 0 && visual_idx >= trusted_count) {
         // Click is on separator or in pending section
         if (visual_idx == trusted_count) {
@@ -988,8 +987,7 @@ void TerminalUI::close_command_menu() {
 void TerminalUI::execute_command(int cmd_idx) {
     if (cmd_idx < 0 || cmd_idx >= static_cast<int>(commands_.size())) return;
 
-    // Just put the command in the input buffer as autocomplete
-    // User can then type more text and press Enter to send
+    // Puts the command in the input buffer as autocomplete; user can add more text and press Enter to send.
     input_buffer_ = commands_[cmd_idx].first + " ";
 
     close_command_menu();
@@ -1106,21 +1104,24 @@ void TerminalUI::handle_command_input(const std::string& cmd_line) {
             add_debug("Peer is not trusted, cannot upload file");
             return;
         }
-        
+
+        // Expand "~" and resolve ".."/"." so paths like "~/dir" or "../dir/file" work.
+        const std::string resolved_path = resolve_local_path(args);
+
         // Get file size for the popup
         struct stat st;
-        if (stat(args.c_str(), &st) != 0) {
+        if (stat(resolved_path.c_str(), &st) != 0) {
             add_debug("Cannot access file: " + args);
             return;
         }
-        
+
         // Show upload popup
-        show_upload_popup(args, peer.username, static_cast<uint64_t>(st.st_size));
-        
+        show_upload_popup(resolved_path, peer.username, static_cast<uint64_t>(st.st_size));
+
         // Trigger file upload via callback
         if (on_upload_file_) {
-            if (on_upload_file_(args, peer.username, peer.ip, peer.tcp_port)) {
-                add_debug("Started uploading " + args + " to " + peer.username);
+            if (on_upload_file_(resolved_path, peer.username, peer.ip, peer.tcp_port)) {
+                add_debug("Started uploading " + resolved_path + " to " + peer.username);
             } else {
                 add_debug("Failed to start upload");
                 close_upload_popup();

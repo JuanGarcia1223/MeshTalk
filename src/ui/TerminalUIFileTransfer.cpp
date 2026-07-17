@@ -393,7 +393,7 @@ bool TerminalUI::handle_download_popup_key(char32_t ch) {
                 if (on_download_file_) {
                     // Create downloads directory if needed
                     const char* home = getenv("HOME");
-                    std::string download_dir = home ? std::string(home) + "/downloads" : "/tmp/downloads";
+                    std::string download_dir = home ? std::string(home) + "/meshtalk" : "/tmp/meshtalk";
                     struct stat st;
                     if (stat(download_dir.c_str(), &st) != 0) {
                         mkdir(download_dir.c_str(), 0755);

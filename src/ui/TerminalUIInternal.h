@@ -1,12 +1,12 @@
 #pragma once
 
-// Shared helpers used by the TerminalUI*.cpp translation units. Not part of
-// the public TerminalUI interface — only included from within src/ui/.
+// Shared helpers for the TerminalUI*.cpp translation units; not part of the public TerminalUI interface.
 
 #include "ui/TerminalUI.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <iomanip>
 #include <sstream>
@@ -40,11 +40,7 @@ inline std::string normalize_datetime_display(const std::string& input) {
     return out;
 }
 
-// Peers embed a UTC "sent" timestamp in the wire protocol, but the epoch-ms
-// value that travels alongside it is timezone-agnostic, so deriving the
-// displayed time from timestamp_ms (converted to local time) avoids showing
-// the sender's UTC clock on screen. Falls back to the string form for
-// pre-migration rows that predate timestamp_ms.
+// timestamp_ms is timezone-agnostic, so display derives from it instead of the embedded UTC string; falls back to the string for pre-migration rows.
 inline std::string format_display_datetime(const std::string& fallback, int64_t timestamp_ms) {
     if (timestamp_ms <= 0) {
         return normalize_datetime_display(fallback);
@@ -55,6 +51,23 @@ inline std::string format_display_datetime(const std::string& fallback, int64_t 
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%d %H:%M");
     return oss.str();
+}
+
+// Expands a leading "~" to $HOME and canonicalizes via realpath; falls back to the tilde-expanded path if realpath fails.
+inline std::string resolve_local_path(const std::string& raw) {
+    std::string path = raw;
+    if (path == "~" || path.rfind("~/", 0) == 0) {
+        const char* home = std::getenv("HOME");
+        if (home) {
+            path = std::string(home) + path.substr(1);
+        }
+    }
+    if (char* resolved = realpath(path.c_str(), nullptr)) {
+        std::string result(resolved);
+        std::free(resolved);
+        return result;
+    }
+    return path;
 }
 
 }  // namespace tui_detail

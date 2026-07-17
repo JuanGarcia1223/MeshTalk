@@ -50,9 +50,7 @@ struct InfoEntry {
 
 class DatabaseManager {
 public:
-    // db_file_stem selects which .db file under ~/.local/share/meshtalk/ to
-    // open (<db_file_stem>.db) — it is not necessarily the app username; see
-    // saveUsername()/loadUsername() for the persisted identity name.
+    // db_file_stem selects which .db file to open — it is not necessarily the app username (see saveUsername/loadUsername).
     DatabaseManager(const std::string& db_file_stem);
     ~DatabaseManager() = default;
 
@@ -87,8 +85,7 @@ public:
     bool saveIdentity(const std::vector<uint8_t>& public_key, const std::vector<uint8_t>& private_key);
     bool loadIdentity(std::vector<uint8_t>& public_key, std::vector<uint8_t>& private_key);
 
-    // Persisted app username (the name shown to peers), stored separately
-    // from db_file_stem so a default "meshtalk.db" can hold any username.
+    // Persisted app username shown to peers, stored separately from db_file_stem.
     bool saveUsername(const std::string& username);
     std::optional<std::string> loadUsername();
 

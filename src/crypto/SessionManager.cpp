@@ -52,8 +52,7 @@ std::vector<uint8_t> SessionManager::buildHandshakePayload(const std::string& pe
         return {};
     }
 
-    // Build HandshakePayload proto manually as raw bytes
-    // ed25519_pk (field 1, bytes), x25519_pk (field 2, bytes), signature (field 3, bytes)
+    // Build HandshakePayload proto manually as raw bytes: ed25519_pk (field 1), x25519_pk (field 2), signature (field 3).
     const auto& ed_pk = key_manager_.publicKey();
     const auto& x_pk = session->our_ephemeral_x25519_pk;
 

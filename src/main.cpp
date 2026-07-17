@@ -54,9 +54,7 @@ std::optional<std::string> prompt_for_username() {
     }
 }
 
-// Resolves the app username from the (already-initialized) db: if --name was
-// given, that name wins and is persisted; otherwise the previously stored
-// username is used, prompting interactively the first time a db has none.
+// Resolves the app username from the db, prompting interactively the first time; --name overrides and persists.
 std::optional<std::string> resolve_username(DatabaseManager& db, const std::string& cli_name) {
     if (!cli_name.empty()) {
         auto stored = db.loadUsername();
@@ -251,10 +249,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // With no --name, all instances share a single default "meshtalk.db"
-    // identity; --name selects a separate per-name db file, e.g. for running
-    // multiple test instances side by side. Either way the actual username
-    // shown to peers is whatever's stored inside that db (see resolve_username).
+    // No --name uses the shared default "meshtalk.db"; --name selects a separate per-name db file for testing.
     const std::string db_file_stem = name.empty() ? "meshtalk" : name;
 
     if (edit_info_mode) {
@@ -323,9 +318,7 @@ int main(int argc, char** argv) {
     }
 
     {
-        // Resolve the username before TerminalUI is constructed (it needs a
-        // fixed self_name_ up front); TerminalUI reopens the same db file
-        // itself below via set_db_file_stem() + initDatabase().
+        // Resolve the username before TerminalUI is constructed, since it needs a fixed self_name_ up front.
         DatabaseManager resolver_db(db_file_stem);
         if (!resolver_db.init()) {
             std::cerr << "failed to initialize database\n";

@@ -53,8 +53,7 @@ public:
     bool weInitiated(const std::string& peer_name) const;
     bool hasSession(const std::string& peer_name) const;
 
-    // Alias an existing session so it can be looked up by a different key
-    // (e.g. when peer name is discovered after session was keyed by IP)
+    // Alias an existing session so it can be looked up by a different key (e.g. peer name discovered after keying by IP).
     void aliasSession(const std::string& from_key, const std::string& to_key);
 
     // Remove a session so the next connection triggers a fresh handshake

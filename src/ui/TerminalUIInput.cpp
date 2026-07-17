@@ -229,8 +229,10 @@ void TerminalUI::run() {
                 --chat_scroll_offset_;
             }
         } else if (key_action && input >= 32 && input <= 126) {
-            if (input_buffer_.size() < 8192) {
-                input_buffer_.push_back(static_cast<char>(input));
+            // in.id is the unshifted key under the Kitty keyboard protocol (Shift+/ reports '/'); eff_text has the shift-corrected char.
+            const uint32_t typed = in.eff_text[0] != 0 ? in.eff_text[0] : input;
+            if (typed >= 32 && typed <= 126 && input_buffer_.size() < 8192) {
+                input_buffer_.push_back(static_cast<char>(typed));
                 // Check if we just typed '/' as first character
                 if (input_buffer_ == "/") {
                     showing_command_menu_ = true;

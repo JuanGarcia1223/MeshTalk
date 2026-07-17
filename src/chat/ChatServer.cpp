@@ -408,9 +408,7 @@ void ChatServer::handle_chat_message(const std::string& from_user, const ChatMes
         cb(msg.from_user(), msg.to_user(), msg.content(), msg.iso_datetime(), msg.timestamp_ms(), msg.msg_id());
     }
 
-    // Send delivery acknowledgment back to sender on the same connection.
-    // Use session_key (not from_user) for encryption so it matches the
-    // session that was used to decrypt the incoming message.
+    // Ack uses session_key (not from_user) so encryption matches the session that decrypted the incoming message.
     if (reply_fd >= 0) {
         Envelope ack_env;
         ack_env.set_type(Envelope::DELIVERY_ACK);
@@ -675,9 +673,7 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
         }
     }
 
-    // Always spawn a single reader thread for this outbound fd.
-    // It first handles the handshake response (if needed), then loops
-    // reading ACKs and control envelopes so nothing is dropped.
+    // Single reader thread handles the handshake response (if needed), then loops reading ACKs/control envelopes.
     if (session_manager_) {
         std::thread([this, fd, peer_name, need_handshake]() {
             // Phase 1: if session not ready yet, read handshake response with timeout.
@@ -737,8 +733,7 @@ bool ChatServer::connect_to(const std::string& ip, uint16_t port, const std::str
                         break;
                     }
                     default:
-                        // Ignore chat/file envelopes on outbound reader —
-                        // they are processed by the inbound accept_loop.
+                        // Chat/file envelopes are ignored here; the inbound accept_loop processes those.
                         break;
                 }
             }
@@ -806,8 +801,7 @@ void ChatServer::register_peer(const std::string& peer_name, const std::string& 
         std::lock_guard<std::mutex> lock(peers_mutex_);
         name_by_ip_[ip] = peer_name;
     }
-    // If a session was created keyed by IP before we knew the peer name,
-    // alias it so both the IP and the peer name resolve to the same session.
+    // Alias a session keyed by IP to the peer name too, once known, so both resolve to the same session.
     if (session_manager_ && session_manager_->hasSession(ip)) {
         session_manager_->aliasSession(ip, peer_name);
         {
@@ -980,8 +974,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                 if (!session_manager_) break;
                 if (logger_) logger_("Received handshake from " + from_user);
 
-                // If we initiated this session, the response thread in connect_to
-                // will handle the handshake response. Skip here to avoid double-processing.
+                // Skip here if we initiated the session — connect_to's response thread handles the handshake response.
                 if (session_manager_->weInitiated(session_key)) {
                     break;
                 }
@@ -999,9 +992,7 @@ void ChatServer::handle_inbound_connection(int fd, const std::string& peer_ip, u
                     std::cerr << "chat: handshake verification FAILED for " << from_user << "\n";
                     return;
                 }
-                // Only lock in the session key if we resolved an actual peer name.
-                // If we only have the IP, leave the mapping open so discovery
-                // can later provide the name and alias the session.
+                // Only lock the session to a key if we resolved a peer name; IP-only stays open for discovery to alias later.
                 if (session_key != peer_ip) {
                     std::lock_guard<std::mutex> lock(session_keys_mutex_);
                     ip_to_session_key_[peer_ip] = session_key;
@@ -1151,6 +1142,5 @@ void ChatServer::handle_file_complete(const std::string& from_user, const FileCo
 
 void ChatServer::send_file_response(const std::string& to_user, const std::string& ip, 
                                     uint16_t port, const std::string& transfer_id, bool accepted) {
-    // For now, auto-accept all file transfers
-    // In the future, this should send a FileResponse message
+    // Auto-accepts all file transfers for now (TODO: send a FileResponse message).
 }
