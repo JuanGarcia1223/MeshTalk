@@ -3,19 +3,20 @@
 ## Startup Flags
 
 ```bash
-./meshtak --name <username> [options]
+./meshtak [--name <username>] [options]
 ```
 
-### Required
-
-| Flag | Description |
-|------|-------------|
-| `--name <name>` | Your one-word username (required) |
+Running with no arguments opens (or creates) a default `meshtalk.db` under
+`~/.local/share/meshtalk/`. The first time that file is created you'll be
+prompted to pick a one-word username, which is then stored in the db and
+reused automatically on every later run — `--name` is not required for
+normal use.
 
 ### Optional
 
 | Flag | Description |
 |------|-------------|
+| `--name <name>` | Load/create a separate `<name>.db` instead of the default `meshtalk.db`, and use `<name>` as the username (stored into that db). Mainly useful for running multiple instances side by side for testing. |
 | `--debug [CAT1,CAT2,...]` | Enable debug console and optional category filtering |
 | `--enable-ack-show` | Show red background on `S:` prefix for pending messages |
 | `--noui` | Run without UI (background discovery only) |

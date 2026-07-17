@@ -13,6 +13,7 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -36,6 +37,47 @@ bool is_one_word(const std::string& value) {
 }
 
 void on_signal(int) { g_keep_running = false; }
+
+// Prompts on stdin for a one-word username; returns nullopt on EOF/closed stdin.
+std::optional<std::string> prompt_for_username() {
+    std::string username;
+    while (true) {
+        std::cout << "No username found for this database. Pick a one-word username: ";
+        std::cout.flush();
+        if (!std::getline(std::cin, username)) {
+            return std::nullopt;
+        }
+        if (is_one_word(username)) {
+            return username;
+        }
+        std::cout << "Username must be a single word with no spaces.\n";
+    }
+}
+
+// Resolves the app username from the (already-initialized) db: if --name was
+// given, that name wins and is persisted; otherwise the previously stored
+// username is used, prompting interactively the first time a db has none.
+std::optional<std::string> resolve_username(DatabaseManager& db, const std::string& cli_name) {
+    if (!cli_name.empty()) {
+        auto stored = db.loadUsername();
+        if (!stored || *stored != cli_name) {
+            db.saveUsername(cli_name);
+        }
+        return cli_name;
+    }
+
+    auto stored = db.loadUsername();
+    if (stored && !stored->empty()) {
+        return stored;
+    }
+
+    auto chosen = prompt_for_username();
+    if (!chosen) {
+        return std::nullopt;
+    }
+    db.saveUsername(*chosen);
+    return chosen;
+}
 
 void run_info_editor(DatabaseManager& db) {
     while (true) {
@@ -193,7 +235,7 @@ int main(int argc, char** argv) {
             name = argv[++i];
         } else {
             std::cerr << "usage: " << argv[0]
-                      << " --name <one-word-name> [--debug [<CAT1,CAT2,...>]] [--enable-ack-show] [--noui] [--edit-info]\n"
+                      << " [--name <one-word-name>] [--debug [<CAT1,CAT2,...>]] [--enable-ack-show] [--noui] [--edit-info]\n"
                       << "  debug categories: UDPB, CRYPTO, MESSAGE, RENDER, NET, FILE\n"
                       << "  example: --debug UDPB,CRYPTO\n";
             return 1;
@@ -204,15 +246,26 @@ int main(int argc, char** argv) {
     bool udp_debug = debug_cats.count("UDPB") > 0;
     bool verbose_crypto = debug_cats.count("CRYPTO") > 0;
 
-    if (!is_one_word(name)) {
-        std::cerr << "--name with a one-word value is required\n";
+    if (!name.empty() && !is_one_word(name)) {
+        std::cerr << "--name must be a single word with no spaces\n";
         return 1;
     }
 
+    // With no --name, all instances share a single default "meshtalk.db"
+    // identity; --name selects a separate per-name db file, e.g. for running
+    // multiple test instances side by side. Either way the actual username
+    // shown to peers is whatever's stored inside that db (see resolve_username).
+    const std::string db_file_stem = name.empty() ? "meshtalk" : name;
+
     if (edit_info_mode) {
-        DatabaseManager db_manager(name);
+        DatabaseManager db_manager(db_file_stem);
         if (!db_manager.init()) {
             std::cerr << "failed to initialize database\n";
+            return 1;
+        }
+        auto resolved_name = resolve_username(db_manager, name);
+        if (!resolved_name) {
+            std::cerr << "no username provided; exiting.\n";
             return 1;
         }
         run_info_editor(db_manager);
@@ -233,12 +286,19 @@ int main(int argc, char** argv) {
 
     if (no_ui_mode) {
         // For noui mode, we need to initialize database and key manager
-        DatabaseManager db_manager(name);
+        DatabaseManager db_manager(db_file_stem);
         if (!db_manager.init()) {
             std::cerr << "failed to initialize database\n";
             chat_server.stop();
             return 1;
         }
+        auto resolved_name = resolve_username(db_manager, name);
+        if (!resolved_name) {
+            std::cerr << "no username provided; exiting.\n";
+            chat_server.stop();
+            return 1;
+        }
+        name = *resolved_name;
         KeyManager key_manager(db_manager);
         if (!key_manager.init()) {
             std::cerr << "failed to initialize crypto identity\n";
@@ -262,6 +322,25 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    {
+        // Resolve the username before TerminalUI is constructed (it needs a
+        // fixed self_name_ up front); TerminalUI reopens the same db file
+        // itself below via set_db_file_stem() + initDatabase().
+        DatabaseManager resolver_db(db_file_stem);
+        if (!resolver_db.init()) {
+            std::cerr << "failed to initialize database\n";
+            chat_server.stop();
+            return 1;
+        }
+        auto resolved_name = resolve_username(resolver_db, name);
+        if (!resolved_name) {
+            std::cerr << "no username provided; exiting.\n";
+            chat_server.stop();
+            return 1;
+        }
+        name = *resolved_name;
+    }
+
     TerminalUI ui(
             debug_mode, enable_ack_show, name,
             [&chat_server, &name, chat_port](const TerminalUI::PeerInfo& peer) {
@@ -277,6 +356,7 @@ int main(int argc, char** argv) {
             [&chat_server](const std::string& peer_name) {
                 chat_server.disconnect_peer(peer_name);
             });
+    ui.set_db_file_stem(db_file_stem);
     if (!ui.init()) {
         chat_server.stop();
         return 1;

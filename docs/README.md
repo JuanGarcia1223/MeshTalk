@@ -19,14 +19,17 @@ Meshtalk is a peer-to-peer encrypted chat application designed for local network
 mkdir build && cd build
 cmake .. && make -j$(nproc)
 
-# Run
-./meshtak --name alice
+# Run (first run prompts for a username, then remembers it in meshtalk.db)
+./meshtak
 
 # With debug output
-./meshtak --name alice --debug UDPB,CRYPTO
+./meshtak --debug UDPB,CRYPTO
 
 # Enable pending-ACK visual indicator
-./meshtak --name alice --enable-ack-show
+./meshtak --enable-ack-show
+
+# --name is only needed to run multiple named instances side by side for testing
+./meshtak --name alice
 ```
 
 ## Core Features

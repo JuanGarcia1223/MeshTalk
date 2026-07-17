@@ -8,14 +8,14 @@
 #include <ctime>
 #include <iostream>
 
-DatabaseManager::DatabaseManager(const std::string& username) : username_(username) {}
+DatabaseManager::DatabaseManager(const std::string& db_file_stem) : db_file_stem_(db_file_stem) {}
 
 std::string DatabaseManager::getDbPath() const {
     const char* home = std::getenv("HOME");
     if (!home) {
         home = "/tmp";
     }
-    return std::string(home) + "/.local/share/meshtalk/" + username_ + ".db";
+    return std::string(home) + "/.local/share/meshtalk/" + db_file_stem_ + ".db";
 }
 
 bool DatabaseManager::ensureDirectoryExists(const std::string& path) {
@@ -178,6 +178,14 @@ bool DatabaseManager::createSchema() {
                 value TEXT NOT NULL,
                 updated_at INTEGER NOT NULL,
                 PRIMARY KEY (peer_name, key)
+            );
+        )");
+
+        // App settings - single row holding this instance's chosen username.
+        db_->exec(R"(
+            CREATE TABLE IF NOT EXISTS app_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                username TEXT
             );
         )");
 
@@ -367,6 +375,45 @@ std::vector<std::string> DatabaseManager::getAllPeers() {
     }
 
     return peers;
+}
+
+bool DatabaseManager::saveUsername(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return false;
+    }
+
+    try {
+        SQLite::Statement insert(*db_,
+            "INSERT INTO app_settings (id, username) VALUES (1, ?) "
+            "ON CONFLICT(id) DO UPDATE SET username = excluded.username");
+        insert.bind(1, username);
+        insert.exec();
+        return true;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to save username: " << ex.what() << "\n";
+        return false;
+    }
+}
+
+std::optional<std::string> DatabaseManager::loadUsername() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!db_) {
+        return std::nullopt;
+    }
+
+    try {
+        SQLite::Statement query(*db_, "SELECT username FROM app_settings WHERE id = 1");
+        if (query.executeStep() && !query.getColumn(0).isNull()) {
+            return query.getColumn(0).getString();
+        }
+        return std::nullopt;
+    } catch (const std::exception& ex) {
+        std::cerr << "db: failed to load username: " << ex.what() << "\n";
+        return std::nullopt;
+    }
 }
 
 bool DatabaseManager::saveIdentity(const std::vector<uint8_t>& public_key,

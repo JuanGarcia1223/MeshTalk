@@ -46,6 +46,11 @@ public:
     bool initDatabase();
     DatabaseManager* getDatabase() { return db_manager_.get(); }
 
+    // Selects which .db file initDatabase() opens (<stem>.db); defaults to
+    // self_name_ when unset. Lets the app db file (e.g. "meshtalk") differ
+    // from the username shown to peers, which is loaded from that db.
+    void set_db_file_stem(const std::string& stem) { db_file_stem_ = stem; }
+
     TerminalUI(const TerminalUI&) = delete;
     TerminalUI& operator=(const TerminalUI&) = delete;
 
@@ -183,6 +188,7 @@ private:
     std::atomic<bool> capture_running_{false};
 
     std::string self_name_;
+    std::string db_file_stem_;
     std::function<void(const PeerInfo&)> on_peer_activate_;
     std::function<std::string(const PeerInfo&, const std::string&)> on_send_chat_;
 

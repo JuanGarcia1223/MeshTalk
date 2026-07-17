@@ -49,7 +49,7 @@ TerminalUI::~TerminalUI() { stop(); }
 
 
 bool TerminalUI::initDatabase() {
-    db_manager_ = std::make_unique<DatabaseManager>(self_name_);
+    db_manager_ = std::make_unique<DatabaseManager>(db_file_stem_.empty() ? self_name_ : db_file_stem_);
     if (!db_manager_->init()) {
         std::cerr << "ui: failed to initialize database\n";
         return false;
