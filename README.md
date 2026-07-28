@@ -1,10 +1,4 @@
-```
-           __  ___          __  ______      ____  
-          /  |/  /__  _____/ /_/_  __/___ _/ / /__
-         / /|_/ / _ \/ ___/ __ \/ / / __ `/ / //_/
-        / /  / /  __(__  ) / / / / / /_/ / / ,<   
-       /_/  /_/\___/____/_/ /_/_/  \__,_/_/_/|_|  
-```
+![image](docs/image.png)
 
 **A peer-to-peer, end-to-end encrypted chat app for your local network: no server, no accounts, no internet required.**
 
